@@ -124,13 +124,9 @@ browser.
    git push -u origin main
    ```
 3. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
-4. **Settings → Secrets and variables → Actions → Variables tab → New repository
-   variable**, add:
-   - `VITE_SUPABASE_URL` = your Project URL
-   - `VITE_SUPABASE_PUBLISHABLE_KEY` = your `sb_publishable_…` key
-
-   (Use *Variables*, not *Secrets*: these values end up in the public JavaScript
-   anyway. Skip this step to publish a demo-only site.)
+4. Put your Project URL and publishable key in **`.env.production`** (committed).
+   Both values are public by design — they end up in the site's JavaScript anyway.
+   Delete the file to publish a demo-only site.
 5. **Actions → Test and deploy to GitHub Pages → Run workflow** (or push to `main`).
    The workflow runs the tests, builds with the right base path
    (`/<repository-name>/`), and deploys.
@@ -288,7 +284,7 @@ The schema already separates the concepts later phases need:
 
 | Symptom | Fix |
 |---|---|
-| "Connected mode isn't set up" | Add the two repository variables and re-run the workflow |
+| "Connected mode isn't set up" | Check the two values in `.env.production`, push, and let the workflow redeploy |
 | Sign-in email never arrives | Check spam; the built-in sender allows 2 emails/hour — set up custom SMTP |
 | Sign-in link opens the site but you're not signed in | Add the site to Authentication → Redirect URLs exactly as above |
 | "Only organizers can create events" | Insert your lowercase email into `organizers` |

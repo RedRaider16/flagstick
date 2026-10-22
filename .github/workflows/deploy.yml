@@ -31,14 +31,11 @@ jobs:
       # Scoring engine + database security tests (in-process Postgres, no credentials needed).
       - run: npm test
 
-      # Connected mode is enabled only if these repository *variables* exist
-      # (Settings → Secrets and variables → Actions → Variables). The publishable
-      # key is designed to be public; never add a secret/service-role key here.
+      # Supabase URL + publishable key come from the committed .env.production
+      # (both are public by design). Never add a secret/service-role key anywhere.
       - run: npm run build
         env:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
 
       - if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v6
