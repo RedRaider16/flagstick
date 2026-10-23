@@ -37,6 +37,7 @@ export function ManageLayout() {
   const tabs: [string, string][] = [
     ['', 'Overview'],
     ['setup', 'Event & course'],
+    ['registration', 'Registration'],
     ['players', 'Players'],
     ...(isTeam ? ([['teams', 'Teams']] as [string, string][]) : []),
     ['groups', 'Groups'],

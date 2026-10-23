@@ -278,3 +278,14 @@ dialog::backdrop { background: rgba(13,54,38,.45); }
   .board .topar { font-size: 1.7rem; width: 3.6rem; }
   .panel { padding: .9rem; }
 }
+
+/* ── Registration ── */
+.reg-facts { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 0 0 1rem; }
+.reg-facts dt { color: var(--ink-soft); font-weight: 600; }
+.reg-facts dd { margin: 0; }
+.reg-card { border: 1px solid var(--rule); border-radius: var(--radius-m); padding: .75rem .9rem; background: #fff; }
+.reg-card table th, .reg-card table td { padding: .3rem .4rem; }
+.reg-callout { border: 2px solid var(--gold); background: var(--gold-tint); border-radius: var(--radius-m); padding: .9rem 1.1rem; margin-bottom: 1rem; }
+.reg-callout h2 { font-size: 1.25rem; margin-bottom: .3rem; }
+
+.choice .hint { display: block; font-weight: 400; color: var(--ink-soft); font-size: .88rem; margin-top: .15rem; }

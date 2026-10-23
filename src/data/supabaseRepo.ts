@@ -13,8 +13,15 @@ import type {
   GolfEvent,
   Group,
   Hole,
+  PaymentMethod,
+  PaymentStatus,
   Player,
   PlayerContact,
+  PlayerHandicap,
+  RegisterResult,
+  RegistrantInput,
+  Registration,
+  RegistrationSettings,
   Round,
   Score,
   ScoreAudit,
@@ -40,6 +47,13 @@ export const liveConfigured = Boolean(liveConfig.url && liveConfig.key)
 const mapEvent = (r: Row): GolfEvent => ({
   id: r.id, publicCode: r.public_code, name: r.name, courseId: r.course_id, date: r.event_date, timezone: r.timezone,
   description: r.description, status: r.status, tiebreakPolicy: r.tiebreak_policy, createdAt: r.created_at,
+  registration: {
+    open: Boolean(r.registration_open),
+    closesAt: r.registration_closes_at ?? null,
+    maxPlayers: r.max_players ?? null,
+    entryFeeCents: r.entry_fee_cents ?? null,
+    paymentInstructions: r.payment_instructions ?? '',
+  },
 })
 const mapRound = (r: Row): Round => ({
   id: r.id, eventId: r.event_id, roundNumber: r.round_number, date: r.round_date, teeId: r.tee_id, format: r.format,
@@ -269,6 +283,14 @@ export class SupabaseRepo implements Repo {
     await run(this.sb.from('events').update(row).eq('id', eventId))
     if (patch.date) await run(this.sb.from('rounds').update({ round_date: patch.date }).eq('event_id', eventId))
   }
+  async updateRegistrationSettings(eventId: string, r: RegistrationSettings) {
+    await run(
+      this.sb.from('events').update({
+        registration_open: r.open, registration_closes_at: r.closesAt, max_players: r.maxPlayers,
+        entry_fee_cents: r.entryFeeCents, payment_instructions: r.paymentInstructions,
+      }).eq('id', eventId),
+    )
+  }
   async updateRound(roundId: string, patch: { teeId?: string | null; format?: Format; startType?: StartType }) {
     const row: Row = {}
     if (patch.teeId !== undefined) row.tee_id = patch.teeId
@@ -325,6 +347,59 @@ export class SupabaseRepo implements Repo {
   }
   async setEntryStatus(entryId: string, status: EntryStatus, note: string) {
     await run(this.sb.rpc('set_entry_status', { p_entry: entryId, p_status: status, p_note: note }))
+  }
+
+  // ── Registration ──
+  async register(code: string, people: RegistrantInput[], teamName: string, note: string): Promise<RegisterResult> {
+    const res = (await run(
+      this.sb.rpc('register_for_event', {
+        p_code: code,
+        p_people: people.map((x) => ({
+          first_name: x.firstName, last_name: x.lastName, email: x.email, phone: x.phone,
+          // DB stores plus handicaps as negatives; the form converts before calling.
+          handicap_index: x.handicapIndex,
+        })),
+        p_team_name: teamName,
+        p_note: note,
+      }),
+    )) as Row
+    return { status: res.status, ref: res.ref, teamName: res.team_name ?? null }
+  }
+  async listRegistrations(eventId: string): Promise<Registration[]> {
+    const [regs, people] = await Promise.all([
+      run(this.sb.from('registrations').select('*').eq('event_id', eventId).order('created_at')),
+      run(this.sb.from('registration_players').select('*').eq('event_id', eventId).order('position')),
+    ])
+    return (regs as Row[]).map((r) => ({
+      id: r.id, eventId: r.event_id, ref: r.ref, status: r.status, teamName: r.team_name, teamId: r.team_id,
+      registrantNote: r.registrant_note, paymentStatus: r.payment_status, paymentMethod: r.payment_method,
+      amountPaidCents: r.amount_paid_cents, adminNote: r.admin_note, source: r.source, createdAt: r.created_at,
+      people: (people as Row[]).filter((p) => p.registration_id === r.id).map((p) => ({
+        position: p.position, firstName: p.first_name, lastName: p.last_name, email: p.email, phone: p.phone,
+        handicapIndex: p.handicap_index === null ? null : Number(p.handicap_index), playerId: p.player_id,
+      })),
+    }))
+  }
+  async updateRegistrationPayment(regId: string, p: { paymentStatus: PaymentStatus; paymentMethod: PaymentMethod; amountPaidCents: number | null; adminNote: string }) {
+    const rows = await run(
+      this.sb.from('registrations').update({
+        payment_status: p.paymentStatus, payment_method: p.paymentMethod, amount_paid_cents: p.amountPaidCents, admin_note: p.adminNote,
+      }).eq('id', regId).select('id'),
+    )
+    if (!(rows as Row[]).length) throw new AppError('Only admins can record payments.', 'forbidden')
+  }
+  async promoteRegistration(regId: string) {
+    await run(this.sb.rpc('promote_registration', { p_reg: regId }))
+  }
+  async cancelRegistration(regId: string, reason: string) {
+    await run(this.sb.rpc('cancel_registration', { p_reg: regId, p_reason: reason }))
+  }
+  async listHandicaps(eventId: string): Promise<PlayerHandicap[]> {
+    const rows = await run(this.sb.from('player_handicaps').select('*').eq('event_id', eventId))
+    return (rows as Row[]).map((r) => ({ playerId: r.player_id, handicapIndex: Number(r.handicap_index), source: r.source, asOf: r.as_of }))
+  }
+  async setPlayerHandicap(playerId: string, index: number | null, source: string, asOf: string) {
+    await run(this.sb.rpc('set_player_handicap', { p_player: playerId, p_index: index, p_source: source, p_as_of: asOf || null }))
   }
 
   // ── Groups ──
@@ -424,6 +499,7 @@ export class SupabaseRepo implements Repo {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'entries', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventId}` }, () => onChange('all'))
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rounds', filter: `id=eq.${roundId}` }, () => onChange('all'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'registrations', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .subscribe()
     return () => void this.sb.removeChannel(ch)
   }

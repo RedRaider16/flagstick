@@ -8,6 +8,8 @@ import type {
   Hole,
   Player,
   PlayerContact,
+  PlayerHandicap,
+  Registration,
   Round,
   Score,
   ScoreAudit,
@@ -17,7 +19,7 @@ import type {
 } from '../domain/types'
 
 export interface DemoState {
-  schema: 1
+  schema: 2
   role: 'admin' | 'scorekeeper' | 'spectator'
   organizers: boolean
   courses: (Course & { ownerId: string })[]
@@ -34,6 +36,8 @@ export interface DemoState {
   audit: ScoreAudit[]
   log: EventLogEntry[]
   staff: StaffMember[]
+  registrations: Registration[]
+  handicaps: PlayerHandicap[]
 }
 
 export const DEMO_USER = { id: 'demo-user', email: 'you@demo.invalid' }
@@ -80,7 +84,7 @@ export function buildDemoState(): DemoState {
   const holes: Hole[] = PARS.map((par, i) => ({ teeId: tee.id, number: i + 1, par, yardage: YARDS[i]!, strokeIndex: SI[i]! }))
 
   const state: DemoState = {
-    schema: 1,
+    schema: 2,
     role: 'admin',
     organizers: true,
     courses: [course],
@@ -97,6 +101,8 @@ export function buildDemoState(): DemoState {
     audit: [],
     log: [],
     staff: [],
+    registrations: [],
+    handicaps: [],
   }
 
   // ── Event 1: individual stroke play, in progress ──
@@ -104,6 +110,7 @@ export function buildDemoState(): DemoState {
     id: 'ev-classic', publicCode: 'DEMO01', name: 'Demo Fall Classic', courseId: course.id, date: today,
     timezone: 'America/Chicago', description: 'Fictional 16-player individual stroke play event for trying the app.',
     status: 'in_progress', tiebreakPolicy: 'card_back', createdAt: now,
+    registration: { open: false, closesAt: null, maxPlayers: 16, entryFeeCents: 6000, paymentInstructions: 'Pay at the pro shop before your tee time.' },
   }
   const r1: Round = { id: 'rd-classic', eventId: e1.id, roundNumber: 1, date: today, teeId: tee.id, format: 'stroke_individual', startType: 'tee_times', status: 'open' }
   state.events.push(e1)
@@ -141,8 +148,15 @@ export function buildDemoState(): DemoState {
   // ── Event 2: two-person scramble, draft, shotgun ──
   const e2: GolfEvent = {
     id: 'ev-scramble', publicCode: 'DEMO02', name: 'Demo Charity Scramble', courseId: course.id, date: today,
-    timezone: 'America/Chicago', description: 'Fictional two-person scramble with a shotgun start. Still in draft.',
-    status: 'draft', tiebreakPolicy: 'share', createdAt: now,
+    timezone: 'America/Chicago', description: 'Fictional two-person scramble with a shotgun start. Registration is open.',
+    status: 'published', tiebreakPolicy: 'share', createdAt: now,
+    registration: {
+      open: true,
+      closesAt: new Date(Date.now() + 7 * 864e5).toISOString(),
+      maxPlayers: 16,
+      entryFeeCents: 7500,
+      paymentInstructions: 'Pay by cash or check at check-in, or Venmo the organizer with your team name.',
+    },
   }
   const r2: Round = { id: 'rd-scramble', eventId: e2.id, roundNumber: 1, date: today, teeId: tee.id, format: 'scramble_2', startType: 'shotgun', status: 'open' }
   state.events.push(e2)
@@ -155,10 +169,20 @@ export function buildDemoState(): DemoState {
       const [first, last] = NAMES[idx]!
       const p: Player = { id: `pl-s${idx}`, eventId: e2.id, firstName: first, lastName: last }
       state.players.push(p)
-      state.contacts.push({ playerId: p.id, email: '', phone: '' })
+      state.contacts.push({ playerId: p.id, email: `${first.toLowerCase()}@example.com`, phone: '' })
       ids.push(p.id)
     }
     const team: Team = { id: `tm-s${t}`, eventId: e2.id, name: teamNames[t]!, playerIds: ids }
+    state.registrations.push({
+      id: `rg-s${t}`, eventId: e2.id, ref: `DMR${String(t + 1).padStart(3, '0')}`, status: 'confirmed', teamName: team.name, teamId: team.id,
+      registrantNote: '', paymentStatus: t < 3 ? 'paid' : 'unpaid', paymentMethod: t < 2 ? 'online' : t === 2 ? 'cash' : '',
+      amountPaidCents: t < 3 ? 15000 : null, adminNote: '', source: 'online', createdAt: now,
+      people: ids.map((pid, k) => {
+        const pl = state.players.find((x) => x.id === pid)!
+        return { position: k + 1, firstName: pl.firstName, lastName: pl.lastName, email: `${pl.firstName.toLowerCase()}@example.com`, phone: '', handicapIndex: Math.round((4 + ((t * 7 + k * 5) % 20) + 0.3) * 10) / 10, playerId: pid }
+      }),
+    })
+    ids.forEach((pid, k) => state.handicaps.push({ playerId: pid, handicapIndex: Math.round((4 + ((t * 7 + k * 5) % 20) + 0.3) * 10) / 10, source: 'Self-reported at registration', asOf: now.slice(0, 10) }))
     state.teams.push(team)
     state.entries.push({ id: `en-s${t}`, eventId: e2.id, kind: 'team', playerId: null, teamId: team.id, status: 'active', statusNote: '' })
   }

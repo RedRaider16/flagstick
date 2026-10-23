@@ -49,7 +49,7 @@ export function Home() {
         </form>
         {codeError && <p id="code-err" className="small" style={{ color: 'var(--danger)', marginTop: '.4rem' }}>{codeError}</p>}
         {repo.mode === 'demo' && (
-          <p className="small muted" style={{ marginTop: '.5rem' }}>Demo codes: DEMO01 (stroke play, in progress) and DEMO02 (scramble, draft — visible to staff only).</p>
+          <p className="small muted" style={{ marginTop: '.5rem' }}>Demo codes: DEMO01 (stroke play, in progress) and DEMO02 (two-person scramble, registration open).</p>
         )}
       </section>
 

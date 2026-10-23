@@ -1,20 +1,27 @@
 // Demo mode: fictional data held in this browser's localStorage. Nothing is shared
 // with anyone else. It enforces the same rules as the database (status, locking,
 // group assignment, version conflicts) so the demo behaves like the real thing.
-import type {
-  EntryStatus,
-  EventBundle,
-  EventStatus,
-  GolfEvent,
-  Score,
-  StaffRole,
+import {
+  NO_REGISTRATION,
+  type EntryStatus,
+  type EventBundle,
+  type EventStatus,
+  type GolfEvent,
+  type PaymentMethod,
+  type PaymentStatus,
+  type Registration,
+  type RegistrantInput,
+  type RegisterResult,
+  type RegistrationSettings,
+  type Score,
+  type StaffRole,
 } from '../domain/types'
 import { validateHoleLayout, type HoleInput } from '../scoring/validation'
 import { AppError } from './errors'
 import { buildDemoState, DEMO_USER, type DemoState } from './demoSeed'
 import type { Access, CourseDetail, GroupInput, NewEventInput, PlayerInput, Repo, SessionUser } from './repo'
 
-const KEY = 'flagstick-demo-v1'
+const KEY = 'flagstick-demo-v2'
 const CHANNEL = 'flagstick-demo'
 
 const uid = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2))
@@ -26,7 +33,7 @@ function loadState(): DemoState {
     const raw = localStorage.getItem(KEY)
     if (raw) {
       const s = JSON.parse(raw) as DemoState
-      if (s.schema === 1) return s
+      if (s.schema === 2) return s
     }
   } catch {
     /* storage unavailable or corrupt — fall back to a fresh demo */
@@ -191,6 +198,7 @@ export class DemoRepo implements Repo {
     this.s.events.push({
       id, publicCode: code, name: input.name.trim(), courseId: input.courseId, date: input.date, timezone: input.timezone,
       description: input.description, status: 'draft', tiebreakPolicy: input.tiebreak, createdAt: nowIso(),
+      registration: { ...NO_REGISTRATION },
     })
     this.s.rounds.push({ id: uid(), eventId: id, roundNumber: 1, date: input.date, teeId: input.teeId, format: input.format, startType: input.startType, status: 'open' })
     this.s.staff.push({ id: uid(), eventId: id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
@@ -224,6 +232,14 @@ export class DemoRepo implements Repo {
     this.requireAdmin(eventId)
     Object.assign(this.event(eventId), patch)
     if (patch.date) this.s.rounds.filter((r) => r.eventId === eventId).forEach((r) => (r.date = patch.date!))
+    this.commit()
+  }
+
+  async updateRegistrationSettings(eventId: string, r: RegistrationSettings) {
+    this.requireAdmin(eventId)
+    if (r.maxPlayers !== null && (!Number.isInteger(r.maxPlayers) || r.maxPlayers < 1 || r.maxPlayers > 500))
+      throw new AppError('Field limit must be 1–500 players, or blank for no limit.', 'invalid')
+    this.event(eventId).registration = { ...r }
     this.commit()
   }
 
@@ -362,6 +378,137 @@ export class DemoRepo implements Repo {
     this.log(e.eventId, `entry_status:${e.status}->${status}`, `${entryId} ${note}`.trim())
     e.status = status
     e.statusNote = note
+    this.commit()
+  }
+
+  // ── Registration ──
+  private makeRef(eventId: string) {
+    let ref: string
+    do ref = Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('')
+    while (this.s.registrations.some((r) => r.eventId === eventId && r.ref === ref))
+    return ref
+  }
+  private confirmInternal(reg: Registration) {
+    const format = this.format(reg.eventId)
+    const ids: string[] = []
+    for (const person of reg.people) {
+      const id = uid()
+      this.s.players.push({ id, eventId: reg.eventId, firstName: person.firstName, lastName: person.lastName })
+      this.s.contacts.push({ playerId: id, email: person.email, phone: person.phone })
+      if (person.handicapIndex !== null)
+        this.s.handicaps.push({
+          playerId: id, handicapIndex: person.handicapIndex,
+          source: reg.source === 'online' ? 'Self-reported at registration' : 'Entered by admin', asOf: reg.createdAt.slice(0, 10),
+        })
+      if (format === 'stroke_individual')
+        this.s.entries.push({ id: uid(), eventId: reg.eventId, kind: 'player', playerId: id, teamId: null, status: 'active', statusNote: '' })
+      person.playerId = id
+      ids.push(id)
+    }
+    if (format === 'scramble_2') {
+      const base = reg.teamName.trim() || reg.people.map((x) => x.lastName).join(' / ')
+      let name = base
+      let n = 1
+      while (this.s.teams.some((t) => t.eventId === reg.eventId && t.name.toLowerCase() === name.toLowerCase())) name = `${base.slice(0, 54)} (${++n})`
+      const teamId = uid()
+      this.s.teams.push({ id: teamId, eventId: reg.eventId, name, playerIds: ids })
+      this.s.entries.push({ id: uid(), eventId: reg.eventId, kind: 'team', playerId: null, teamId, status: 'active', statusNote: '' })
+      reg.teamId = teamId
+    }
+    reg.status = 'confirmed'
+  }
+
+  async register(code: string, people: RegistrantInput[], teamName: string, note: string): Promise<RegisterResult> {
+    const ev = this.s.events.find((e) => e.publicCode === code.trim().toUpperCase())
+    if (!ev || (ev.status !== 'published' && ev.status !== 'in_progress')) throw new AppError('This event is not open for registration.', 'not_found')
+    const r = ev.registration
+    if (!r.open) throw new AppError('Registration for this event is closed.', 'conflict')
+    if (r.closesAt && Date.now() >= Date.parse(r.closesAt)) throw new AppError('Registration for this event has closed.', 'conflict')
+    const size = this.format(ev.id) === 'scramble_2' ? 2 : 1
+    if (people.length !== size) throw new AppError(size === 2 ? 'This is a two-person team event. Enter both players.' : 'Register one player at a time.', 'invalid')
+    const emails: string[] = []
+    people.forEach((x, i) => {
+      if (!x.firstName.trim() || !x.lastName.trim()) throw new AppError(`Player ${i + 1}: first and last name are required.`, 'invalid')
+      const em = x.email.trim().toLowerCase()
+      if (i === 0 && !em) throw new AppError('An email address is required so the organizer can reach you.', 'invalid')
+      if (em) {
+        if (emails.includes(em)) throw new AppError('Each player needs a different email address.', 'invalid')
+        emails.push(em)
+        if (this.s.registrations.some((g) => g.eventId === ev.id && g.status !== 'cancelled' && g.people.some((p) => p.email.toLowerCase() === em)))
+          throw new AppError(`${em} is already registered for this event. Contact the organizer to make changes.`, 'conflict')
+      }
+    })
+    const count = this.s.players.filter((p) => p.eventId === ev.id).length
+    const full = r.maxPlayers !== null && count + size > r.maxPlayers
+    const reg: Registration = {
+      id: uid(), eventId: ev.id, ref: this.makeRef(ev.id), status: 'waitlisted', teamName: teamName.trim().slice(0, 60), teamId: null,
+      registrantNote: note.trim().slice(0, 500), paymentStatus: 'unpaid', paymentMethod: '', amountPaidCents: null, adminNote: '',
+      source: 'online', createdAt: nowIso(),
+      people: people.map((x, i) => ({
+        position: i + 1, firstName: x.firstName.trim(), lastName: x.lastName.trim(), email: x.email.trim().toLowerCase(), phone: x.phone.trim(),
+        handicapIndex: x.handicapIndex.trim() === '' ? null : Number(x.handicapIndex), playerId: null,
+      })),
+    }
+    this.s.registrations.push(reg)
+    if (!full) this.confirmInternal(reg)
+    this.log(ev.id, `registration_${reg.status}`, reg.ref)
+    this.commit()
+    return { status: reg.status === 'confirmed' ? 'confirmed' : 'waitlisted', ref: reg.ref, teamName: reg.teamId ? this.s.teams.find((t) => t.id === reg.teamId)!.name : null }
+  }
+  async listRegistrations(eventId: string) {
+    if (!this.isAdmin(eventId)) return []
+    return clone(this.s.registrations.filter((r) => r.eventId === eventId))
+  }
+  private reg(regId: string) {
+    const r = this.s.registrations.find((x) => x.id === regId)
+    if (!r) throw new AppError('Registration not found.', 'not_found')
+    this.requireAdmin(r.eventId)
+    return r
+  }
+  async updateRegistrationPayment(regId: string, p: { paymentStatus: PaymentStatus; paymentMethod: PaymentMethod; amountPaidCents: number | null; adminNote: string }) {
+    const r = this.reg(regId)
+    Object.assign(r, p)
+    this.commit()
+  }
+  async promoteRegistration(regId: string) {
+    const r = this.reg(regId)
+    if (r.status !== 'waitlisted') throw new AppError('Only waitlisted registrations can be confirmed.', 'conflict')
+    this.confirmInternal(r)
+    this.log(r.eventId, 'registration_promoted', r.ref)
+    this.commit()
+  }
+  async cancelRegistration(regId: string, reason: string) {
+    const r = this.reg(regId)
+    if (r.status === 'cancelled') return
+    const playerIds = r.people.map((p) => p.playerId).filter((x): x is string => !!x)
+    const entryIds = this.s.entries.filter((e) => (e.playerId && playerIds.includes(e.playerId)) || (r.teamId && e.teamId === r.teamId)).map((e) => e.id)
+    if (this.s.scores.some((s) => entryIds.includes(s.entryId))) throw new AppError('This registration has scores. Mark the entry WD instead of cancelling.', 'conflict')
+    this.s.entries = this.s.entries.filter((e) => !entryIds.includes(e.id))
+    this.s.groups.forEach((g) => (g.entryIds = g.entryIds.filter((id) => !entryIds.includes(id))))
+    this.s.teams = this.s.teams.filter((t) => t.id !== r.teamId)
+    this.s.players = this.s.players.filter((p) => !playerIds.includes(p.id))
+    this.s.contacts = this.s.contacts.filter((c) => !playerIds.includes(c.playerId))
+    this.s.handicaps = this.s.handicaps.filter((h) => !playerIds.includes(h.playerId))
+    r.people.forEach((p) => (p.playerId = null))
+    r.status = 'cancelled'
+    r.teamId = null
+    this.log(r.eventId, 'registration_cancelled', `${r.ref} ${reason}`.trim())
+    this.commit()
+  }
+  async listHandicaps(eventId: string) {
+    if (!this.isAdmin(eventId)) return []
+    const ids = new Set(this.s.players.filter((p) => p.eventId === eventId).map((p) => p.id))
+    return clone(this.s.handicaps.filter((h) => ids.has(h.playerId)))
+  }
+  async setPlayerHandicap(playerId: string, index: number | null, source: string, asOf: string) {
+    const pl = this.s.players.find((p) => p.id === playerId)
+    if (!pl) throw new AppError('Player not found.', 'not_found')
+    this.requireAdmin(pl.eventId)
+    this.s.handicaps = this.s.handicaps.filter((h) => h.playerId !== playerId)
+    if (index !== null) {
+      if (!source.trim()) throw new AppError('Say where this handicap came from.', 'invalid')
+      this.s.handicaps.push({ playerId, handicapIndex: Math.round(index * 10) / 10, source: source.trim(), asOf: asOf || nowIso().slice(0, 10) })
+    }
     this.commit()
   }
 

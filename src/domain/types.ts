@@ -60,6 +60,100 @@ export interface GolfEvent {
   status: EventStatus
   tiebreakPolicy: TiebreakPolicy
   createdAt: string
+  registration: RegistrationSettings
+}
+
+export interface RegistrationSettings {
+  open: boolean
+  /** ISO timestamp, or null for no closing time. */
+  closesAt: string | null
+  /** Field limit in players, or null for no limit. */
+  maxPlayers: number | null
+  /** Entry fee per player in cents, or null if none is shown. */
+  entryFeeCents: number | null
+  /** Shown to players on the sign-up page, e.g. "Pay at the pro shop". */
+  paymentInstructions: string
+}
+
+export const NO_REGISTRATION: RegistrationSettings = { open: false, closesAt: null, maxPlayers: null, entryFeeCents: null, paymentInstructions: '' }
+
+export type RegistrationStatus = 'confirmed' | 'waitlisted' | 'cancelled'
+export type PaymentStatus = 'unpaid' | 'paid' | 'waived' | 'refunded'
+export type PaymentMethod = '' | 'cash' | 'check' | 'card' | 'online' | 'other'
+
+export const PAYMENT_STATUS_LABEL: Record<PaymentStatus, string> = { unpaid: 'Unpaid', paid: 'Paid', waived: 'Waived', refunded: 'Refunded' }
+export const PAYMENT_METHOD_LABEL: Record<PaymentMethod, string> = { '': '—', cash: 'Cash', check: 'Check', card: 'Card', online: 'Online', other: 'Other' }
+
+export interface RegistrationPerson {
+  position: number
+  firstName: string
+  lastName: string
+  email: string
+  phone: string
+  handicapIndex: number | null
+  playerId: string | null
+}
+
+export interface Registration {
+  id: string
+  eventId: string
+  ref: string
+  status: RegistrationStatus
+  teamName: string
+  teamId: string | null
+  registrantNote: string
+  paymentStatus: PaymentStatus
+  paymentMethod: PaymentMethod
+  amountPaidCents: number | null
+  adminNote: string
+  source: 'online' | 'admin'
+  createdAt: string
+  people: RegistrationPerson[]
+}
+
+/** What a player types on the public sign-up form. */
+export interface RegistrantInput {
+  firstName: string
+  lastName: string
+  email: string
+  phone: string
+  /** As typed, e.g. "12.4" or "+1.2"; blank if unknown. */
+  handicapIndex: string
+}
+
+export interface RegisterResult {
+  status: 'confirmed' | 'waitlisted'
+  ref: string
+  teamName: string | null
+}
+
+/** Handicap Index as given, with source and date. Not a Course or Playing Handicap. */
+export interface PlayerHandicap {
+  playerId: string
+  handicapIndex: number
+  source: string
+  asOf: string
+}
+
+export function formatHandicapIndex(n: number | null | undefined): string {
+  if (n === null || n === undefined) return ''
+  return n < 0 ? `+${Math.abs(n).toFixed(1)}` : n.toFixed(1)
+}
+
+/** Parse a typed handicap index. Golf writes "plus" handicaps as +1.2, stored as -1.2. */
+export function parseHandicapIndex(text: string): { ok: true; value: number | null } | { ok: false; error: string } {
+  const t = text.trim()
+  if (!t) return { ok: true, value: null }
+  const m = /^(\+)?(\d{1,2})(\.\d)?$/.exec(t)
+  if (!m) return { ok: false, error: 'Use a number with up to one decimal, like 12.4 (or +1.2 for a plus handicap).' }
+  const v = Number(`${m[2]}${m[3] ?? ''}`) * (m[1] ? -1 : 1)
+  if (v < -10 || v > 54) return { ok: false, error: 'Handicap index must be between +10.0 and 54.0.' }
+  return { ok: true, value: v }
+}
+
+export function formatMoney(cents: number | null | undefined): string {
+  if (cents === null || cents === undefined) return ''
+  return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
 }
 
 export interface Round {

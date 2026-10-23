@@ -12,6 +12,10 @@ const ACTION_LABEL: Record<string, string> = {
   round_unlocked: 'Round unlocked',
   finalized: 'Results finalized',
   reopened: 'Final results reopened',
+  registration_confirmed: 'Registered',
+  registration_waitlisted: 'Registered (waitlist)',
+  registration_promoted: 'Moved from waitlist into the field',
+  registration_cancelled: 'Registration cancelled',
 }
 function describe(a: string): string {
   if (ACTION_LABEL[a]) return ACTION_LABEL[a]!

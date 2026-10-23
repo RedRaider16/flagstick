@@ -11,7 +11,14 @@ import type {
   GolfEvent,
   Group,
   Hole,
+  PaymentMethod,
+  PaymentStatus,
   Player,
+  PlayerHandicap,
+  RegisterResult,
+  RegistrantInput,
+  Registration,
+  RegistrationSettings,
   PlayerContact,
   Score,
   ScoreAudit,
@@ -95,6 +102,7 @@ export interface Repo {
   createEvent(input: NewEventInput): Promise<string>
   loadBundle(eventId: string): Promise<EventBundle>
   updateEvent(eventId: string, patch: Partial<Pick<GolfEvent, 'name' | 'date' | 'timezone' | 'description' | 'tiebreakPolicy'>>): Promise<void>
+  updateRegistrationSettings(eventId: string, s: RegistrationSettings): Promise<void>
   updateRound(roundId: string, patch: { teeId?: string | null; format?: Format; startType?: StartType }): Promise<void>
   deleteEvent(eventId: string): Promise<void>
 
@@ -107,6 +115,16 @@ export interface Repo {
   updateTeam(teamId: string, eventId: string, name: string, playerIds: string[]): Promise<void>
   deleteTeam(teamId: string): Promise<void>
   setEntryStatus(entryId: string, status: EntryStatus, note: string): Promise<void>
+
+  // ── Registration ──
+  /** Public: sign up for an event by its code (no account needed). */
+  register(code: string, people: RegistrantInput[], teamName: string, note: string): Promise<RegisterResult>
+  listRegistrations(eventId: string): Promise<Registration[]>
+  updateRegistrationPayment(regId: string, p: { paymentStatus: PaymentStatus; paymentMethod: PaymentMethod; amountPaidCents: number | null; adminNote: string }): Promise<void>
+  promoteRegistration(regId: string): Promise<void>
+  cancelRegistration(regId: string, reason: string): Promise<void>
+  listHandicaps(eventId: string): Promise<PlayerHandicap[]>
+  setPlayerHandicap(playerId: string, index: number | null, source: string, asOf: string): Promise<void>
 
   // ── Groups ──
   createGroup(roundId: string, eventId: string, g: GroupInput): Promise<string>

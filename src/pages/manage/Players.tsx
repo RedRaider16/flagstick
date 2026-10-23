@@ -5,7 +5,7 @@ import { CsvImport } from '../../components/CsvImport'
 import { EntryStatusControl } from '../../components/EntryStatusControl'
 import { ErrorNote, Notice, useReasonDialog } from '../../components/ui'
 import type { PlayerInput } from '../../data/repo'
-import { playerName, type PlayerContact } from '../../domain/types'
+import { formatHandicapIndex, parseHandicapIndex, playerName, type PlayerContact, type PlayerHandicap } from '../../domain/types'
 import { parsePlayerCsv, PLAYER_CSV_HEADER, type PlayerImportRow } from '../../scoring/csv'
 import { useManage } from './ManageLayout'
 
@@ -17,6 +17,7 @@ export function Players() {
   const { busy, error, setError, run } = useAction()
   const dialog = useReasonDialog()
   const [contacts, setContacts] = useState<PlayerContact[]>([])
+  const [handicaps, setHandicaps] = useState<PlayerHandicap[]>([])
   const [form, setForm] = useState<PlayerInput>(empty)
   const [editing, setEditing] = useState<string | null>(null)
   const [edit, setEdit] = useState<PlayerInput>(empty)
@@ -25,6 +26,25 @@ export function Players() {
 
   const loadContacts = useCallback(() => repo.listContacts(bundle.event.id).then(setContacts, () => setContacts([])), [repo, bundle.event.id])
   useEffect(() => void loadContacts(), [loadContacts, bundle])
+  const loadHcp = useCallback(() => repo.listHandicaps(bundle.event.id).then(setHandicaps, () => setHandicaps([])), [repo, bundle.event.id])
+  useEffect(() => void loadHcp(), [loadHcp, bundle])
+  const hcpOf = (id: string) => handicaps.find((h) => h.playerId === id)
+  const editHcp = async (pl: { id: string; firstName: string; lastName: string }) => {
+    const cur = hcpOf(pl.id)
+    const v = await dialog.ask({
+      title: `Handicap index for ${pl.firstName} ${pl.lastName}`,
+      body: <p>{cur ? `Currently ${formatHandicapIndex(cur.handicapIndex)} (${cur.source}, ${cur.asOf}). ` : ''}Enter the Handicap Index, e.g. 12.4 or +1.2. Leave blank to remove it. This is recorded with today's date and the source "Entered by admin". It is not used in results yet.</p>,
+      label: 'Handicap index',
+      confirmLabel: 'Save',
+    })
+    if (v === null) return
+    const parsed = parseHandicapIndex(v)
+    if (!parsed.ok) return setError(parsed.error)
+    await run(async () => {
+      await repo.setPlayerHandicap(pl.id, parsed.value, 'Entered by admin', new Date().toISOString().slice(0, 10))
+      await loadHcp()
+    })
+  }
 
   const players = [...bundle.players].sort((a, b) => a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName))
   const contactOf = (id: string) => contacts.find((c) => c.playerId === id)
@@ -103,6 +123,7 @@ export function Players() {
                   <th scope="col">Name</th>
                   <th scope="col">Email</th>
                   <th scope="col">Phone</th>
+                  <th scope="col" className="n">HI</th>
                   {isTeam ? <th scope="col">Team</th> : <th scope="col">Status</th>}
                   <th scope="col"><span className="sr-only">Actions</span></th>
                 </tr>
@@ -114,7 +135,7 @@ export function Players() {
                   if (editing === pl.id)
                     return (
                       <tr key={pl.id}>
-                        <td colSpan={5}>
+                        <td colSpan={6}>
                           <form className="row" onSubmit={(e) => {
                             e.preventDefault()
                             void run(async () => {
@@ -138,6 +159,13 @@ export function Players() {
                       <td><strong>{playerName(pl)}</strong></td>
                       <td className="small">{c?.email || <span className="muted">—</span>}</td>
                       <td className="small">{c?.phone || <span className="muted">—</span>}</td>
+                      <td className="n">
+                        <button type="button" className="btn quiet small" disabled={final} onClick={() => void editHcp(pl)}
+                          title={hcpOf(pl.id) ? `${hcpOf(pl.id)!.source}, ${hcpOf(pl.id)!.asOf}` : 'Add handicap index'}
+                          aria-label={`Handicap index for ${playerName(pl)}: ${formatHandicapIndex(hcpOf(pl.id)?.handicapIndex) || 'none'}. Edit`}>
+                          {formatHandicapIndex(hcpOf(pl.id)?.handicapIndex) || '+ Add'}
+                        </button>
+                      </td>
                       {isTeam ? (
                         <td>{teamOf(pl.id)?.name ?? <span className="muted">No team</span>}</td>
                       ) : (

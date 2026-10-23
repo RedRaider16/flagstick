@@ -9,6 +9,8 @@ import { SignIn } from './pages/SignIn'
 import { NewEvent } from './pages/NewEvent'
 import { Courses, CourseEditor } from './pages/Courses'
 import { PublicEvent } from './pages/PublicEvent'
+import { Register } from './pages/Register'
+import { Registrations } from './pages/manage/Registrations'
 import { ManageLayout } from './pages/manage/ManageLayout'
 import { Overview } from './pages/manage/Overview'
 import { Setup } from './pages/manage/Setup'
@@ -29,6 +31,7 @@ const pages: RouteObject[] = [
   { path: 'courses', element: <Courses /> },
   { path: 'courses/:courseId', element: <CourseEditor /> },
   { path: 'e/:code', element: <PublicEvent /> },
+  { path: 'e/:code/register', element: <Register /> },
   { path: 'score/:eventId', element: <ScoreHome /> },
   { path: 'score/:eventId/:groupId', element: <ScoreGroup /> },
   { path: 'manage/:eventId/print/pairings', element: <PrintPairings /> },
@@ -39,6 +42,7 @@ const pages: RouteObject[] = [
     children: [
       { index: true, element: <Overview /> },
       { path: 'setup', element: <Setup /> },
+      { path: 'registration', element: <Registrations /> },
       { path: 'players', element: <Players /> },
       { path: 'teams', element: <Teams /> },
       { path: 'groups', element: <Groups /> },

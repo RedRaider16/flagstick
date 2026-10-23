@@ -5,7 +5,8 @@ import { useAccess, useBundle, useTitle } from '../app/hooks'
 import { Leaderboard } from '../components/Leaderboard'
 import { ErrorNote, Loading, StatusBadge } from '../components/ui'
 import { buildLeaderboard, formatDate, formatTeeTime, nameOf } from '../domain/derive'
-import { FORMAT_LABEL } from '../domain/types'
+import { FORMAT_LABEL, formatMoney } from '../domain/types'
+import { formatCloses, registrationState } from './Register'
 
 export function PublicEvent() {
   const { code } = useParams()
@@ -55,6 +56,24 @@ export function PublicEvent() {
         </div>
       </div>
       {bundle.event.description && <p>{bundle.event.description}</p>}
+      {(() => {
+        const rs = registrationState(bundle)
+        if (!rs.canRegister) return null
+        const r = bundle.event.registration
+        return (
+          <section className="reg-callout no-print" aria-labelledby="reg-h">
+            <h2 id="reg-h">Registration is open</h2>
+            <p style={{ margin: '0 0 .6rem' }}>
+              {r.entryFeeCents !== null && <>{formatMoney(r.entryFeeCents)} per player. </>}
+              {r.closesAt && <>Closes {formatCloses(r.closesAt, bundle.event.timezone)}. </>}
+              {rs.spotsLeft !== null && (rs.spotsLeft === 0 ? 'The field is full; new sign-ups join the waitlist.' : `${rs.spotsLeft} spot${rs.spotsLeft === 1 ? '' : 's'} left.`)}
+            </p>
+            <Link className="btn primary" to={p(`e/${bundle.event.publicCode}/register`)} style={{ minHeight: 'var(--tap)' }}>
+              {rs.spotsLeft === 0 ? 'Join the waitlist' : isTeam ? 'Register your team' : 'Register'}
+            </Link>
+          </section>
+        )
+      })()}
 
       <div className="tabs no-print" role="tablist">
         <a href="#board" role="tab" aria-selected={tab === 'board'} className={tab === 'board' ? 'active' : ''} onClick={(e) => (e.preventDefault(), setTab('board'))}>Leaderboard</a>
