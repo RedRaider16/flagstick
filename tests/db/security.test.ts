@@ -26,8 +26,8 @@ async function setupEvent(admin: TestUser, name: string, format: 'stroke_individ
     await db.as(admin, 'insert into holes(tee_id, number, par, yardage, stroke_index) values ($1,$2,$3,$4,$5)', [tee!.id, i + 1, PARS[i], 380, i + 1])
   const [ev] = await db.as<{ id: string }>(
     admin,
-    `select create_event($1, $2, $3, '2026-11-07', 'America/Chicago', '', $4, 'tee_times', 'share') as id`,
-    [name, course!.id, tee!.id, format],
+    `select create_event($1, $2, $3, '2026-11-07', 'America/Chicago', '', $4::int, null, 'tee_times', 'share') as id`,
+    [name, course!.id, tee!.id, format === 'scramble_2' ? 2 : 1],
   )
   const event = ev!.id
   const [round] = await db.as<{ id: string }>(admin, 'select id from rounds where event_id = $1', [event])
@@ -66,11 +66,11 @@ describe('event creation', () => {
   it('only organizers can create courses and events', async () => {
     const r = await db.fails(rando, `insert into courses(name) values ('Sneaky') returning id`)
     expect(r.message).toMatch(/row-level security/)
-    const r2 = await db.fails(rando, `select create_event('x', gen_random_uuid(), null, '2026-01-01', '', '', 'stroke_individual', 'tee_times', 'share')`)
+    const r2 = await db.fails(rando, `select create_event('x', gen_random_uuid(), null, '2026-01-01', '', '', 1, null, 'tee_times', 'share')`)
     expect(r2.code).toBe('PT403')
   })
   it('anonymous users cannot create events', async () => {
-    const r = await db.fails('anon', `select create_event('x', gen_random_uuid(), null, '2026-01-01', '', '', 'stroke_individual', 'tee_times', 'share')`)
+    const r = await db.fails('anon', `select create_event('x', gen_random_uuid(), null, '2026-01-01', '', '', 1, null, 'tee_times', 'share')`)
     expect(r.message).toMatch(/permission denied/)
   })
   it('creator becomes admin and gets a 6-character public code', async () => {
@@ -272,7 +272,7 @@ describe('locking, WD/DQ, finalization and reopening', () => {
     const [r] = await db.as<{ status: string }>(org, 'select status from rounds where id = $1', [e1.round])
     expect(r!.status).toBe('locked')
     const [log] = await db.as<{ action: string; detail: string; actor_email: string }>(org, 'select action, detail, actor_email from event_log where event_id = $1 order by id desc limit 1', [e1.event])
-    expect(log).toEqual({ action: 'reopened', detail: 'scorecard error on 7', actor_email: 'chris@example.com' })
+    expect(log).toEqual({ action: 'reopened', detail: 'Round 1. scorecard error on 7', actor_email: 'chris@example.com' })
     expect((await failScore(sk, e1, 0, 1, 3, 1)).message).toMatch(/locked/)
   })
 })
@@ -295,8 +295,8 @@ describe('data integrity', () => {
   })
 
   it('format change is blocked once scores exist', async () => {
-    const r = await db.fails(org, `update rounds set format = 'scramble_2' where id = $1`, [e1.round])
-    expect(r.message).toMatch(/format can't change/)
+    const r = await db.fails(org, `update events set team_size = 2 where id = (select event_id from rounds where id = $1)`, [e1.round])
+    expect(r.message).toMatch(/team size can't change/)
   })
 })
 
@@ -309,7 +309,7 @@ describe('two-person scramble', () => {
     const [team] = await db.as<{ id: string }>(org, `insert into teams(event_id, name) values ($1, 'Eagles') returning id`, [ev.event])
     await db.as(org, 'insert into team_members(team_id, player_id, event_id) values ($1,$2,$3),($1,$4,$3)', [team!.id, players[0], ev.event, players[1]])
     const r = await db.fails(org, 'insert into team_members(team_id, player_id, event_id) values ($1,$2,$3)', [team!.id, players[2], ev.event])
-    expect(r.message).toMatch(/at most two/)
+    expect(r.message).toMatch(/at most 2 players/)
     const entries = await db.as<{ kind: string }>(org, 'select kind from entries where event_id = $1', [ev.event])
     expect(entries).toEqual([{ kind: 'team' }])
   })
@@ -324,6 +324,6 @@ describe('two-person scramble', () => {
   it('cannot start while a team does not have exactly two players', async () => {
     await db.as(org, `select set_event_status($1, 'published', '')`, [ev.event])
     const r = await db.fails(org, `select set_event_status($1, 'in_progress', '')`, [ev.event])
-    expect(r.message).toMatch(/exactly two players/)
+    expect(r.message).toMatch(/at least 2 players/)
   })
 })

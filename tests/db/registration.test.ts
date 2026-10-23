@@ -13,7 +13,7 @@ async function makeEvent(name: string, format: 'stroke_individual' | 'scramble_2
   const [tee] = await db.as<{ id: string }>(org, `insert into tees(course_id, name) values ($1, 'White') returning id`, [course!.id])
   for (let i = 0; i < 18; i++)
     await db.as(org, 'insert into holes(tee_id, number, par, yardage, stroke_index) values ($1,$2,$3,380,$4)', [tee!.id, i + 1, PARS[i], i + 1])
-  const [ev] = await db.as<{ id: string }>(org, `select create_event($1,$2,$3,'2026-11-07','America/Chicago','',$4,'tee_times','share') as id`, [name, course!.id, tee!.id, format])
+  const [ev] = await db.as<{ id: string }>(org, `select create_event($1,$2,$3,'2026-11-07','America/Chicago','',$4::int,null,'tee_times','share') as id`, [name, course!.id, tee!.id, format === 'scramble_2' ? 2 : 1])
   const cols = Object.keys(settings)
   if (cols.length)
     await db.as(org, `update events set ${cols.map((c, i) => `${c} = $${i + 2}`).join(', ')} where id = $1`, [ev!.id, ...Object.values(settings)])
@@ -166,7 +166,7 @@ describe('two-person scramble registration', () => {
   })
 
   it('requires both players', async () => {
-    expect((await registerFails('anon', ev.code, [person('A', 'Solo', 'a@x.co')])).message).toMatch(/two-person team/)
+    expect((await registerFails('anon', ev.code, [person('A', 'Solo', 'a@x.co')])).message).toMatch(/2-person team/)
   })
 
   it('creates two players and a team entry, defaulting the team name to last names', async () => {

@@ -1,5 +1,6 @@
-// Gross stroke-play leaderboard. Used for individual stroke play and for two-person
-// scramble (where each entry is a team with one score per hole). See docs/SCORING.md.
+// Gross leaderboard for one round. Each entry has one counting score per hole
+// (see formats.ts: scramble and individual scores as entered, best ball folded to
+// the lowest N player scores, with par scaled to match). See docs/SCORING.md.
 
 import type { EntryStatus, TiebreakPolicy } from '../domain/types'
 import { cardBack } from './tiebreak'
@@ -15,6 +16,8 @@ export interface LbEntry {
   status: EntryStatus
   /** Starting hole of the entry's group; 1 if unassigned. */
   startingHole: number
+  /** Par by hole when this entry plays a different tee from the round's. */
+  pars?: ReadonlyMap<number, number>
 }
 
 export interface LbInput {
@@ -30,9 +33,9 @@ export interface LbRow {
   entryId: string
   name: string
   status: EntryStatus
-  /** Numeric position, or null if unranked (no scores, WD, DQ). */
+  /** Numeric position, or null if unranked (no scores, WD, DQ, DNF, NS). */
   position: number | null
-  /** Display label: "1", "T3", "WD", "DQ", "—". */
+  /** Display label: "1", "T3", "WD", "DQ", "DNF", "NS", "—". */
   positionLabel: string
   tied: boolean
   gross: number | null
@@ -97,7 +100,7 @@ export function computeLeaderboard(input: LbInput): Leaderboard {
     let par = 0
     for (const [hole, strokes] of holeScores) {
       gross += strokes
-      par += parByHole.get(hole)!
+      par += e.pars?.get(hole) ?? parByHole.get(hole)!
     }
     const holesPlayed = holeScores.size
     return {
@@ -181,7 +184,7 @@ export function finalizationBlockers(lb: Leaderboard): string[] {
     if (r.status !== 'active') continue
     if (!r.complete) {
       const missing = r.holesPlayed === 0 ? 'no scores' : `${18 - r.holesPlayed} hole(s) missing`
-      problems.push(`${r.name}: ${missing}. Finish the card or mark WD/DQ.`)
+      problems.push(`${r.name}: ${missing}. Finish the card or mark WD, DNF or NS.`)
     }
   }
   return problems

@@ -6,7 +6,7 @@ export type RoundStatus = 'open' | 'locked' | 'finalized'
 export type Format = 'stroke_individual' | 'scramble_2'
 export type StartType = 'tee_times' | 'shotgun'
 export type TiebreakPolicy = 'share' | 'card_back'
-export type EntryStatus = 'active' | 'wd' | 'dq'
+export type EntryStatus = 'active' | 'wd' | 'dq' | 'dnf' | 'ns'
 export type StaffRole = 'admin' | 'scorekeeper'
 
 export const FORMAT_LABEL: Record<Format, string> = {
