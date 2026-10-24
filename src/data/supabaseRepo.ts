@@ -17,8 +17,13 @@ import type {
   PaymentStatus,
   Player,
   PlayerContact,
+  PayoutTable,
   PlayerHandicap,
   RegisterResult,
+  RegistrationAnswer,
+  RegistrationQuestion,
+  SideGame,
+  SideGameResult,
   RegistrantInput,
   Registration,
   RegistrationSettings,
@@ -32,7 +37,8 @@ import type {
 } from '../domain/types'
 import type { HoleInput } from '../scoring/validation'
 import { AppError, type ErrorKind } from './errors'
-import type { Access, CourseDetail, EventPatch, GroupInput, NewEventInput, PlayerInput, Repo, RoundPatch, ScoreSlot, SessionUser } from './repo'
+import { DEFAULT_ALLOWANCES, type NetAllowances } from '../scoring/handicap'
+import type { Access, AnswerInput, CourseDetail, EventPatch, EventSetup, GroupInput, NewEventInput, PlayerInput, QuestionInput, Repo, RoundPatch, ScoreSlot, SessionUser, SideGameInput } from './repo'
 
 type Row = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -52,15 +58,49 @@ const mapEvent = (r: Row): GolfEvent => ({
     maxPlayers: r.max_players ?? null,
     entryFeeCents: r.entry_fee_cents ?? null,
     paymentInstructions: r.payment_instructions ?? '',
+    opensAt: r.registration_opens_at ?? null,
+    waitlistLimit: r.waitlist_limit ?? null,
+    showParticipants: Boolean(r.show_participants),
   },
   teamSize: r.team_size ?? 1,
   cumulative: r.cumulative ?? true,
   isTemplate: Boolean(r.is_template),
+  scoringBasis: r.scoring_basis ?? 'gross',
+  netAllowances: mapAllowances(r.net_allowances),
+  maxHandicapIndex: r.max_handicap_index === null || r.max_handicap_index === undefined ? null : Number(r.max_handicap_index),
+  hidePurse: Boolean(r.hide_purse),
+})
+function mapAllowances(j: Row | null | undefined): NetAllowances {
+  if (!j) return DEFAULT_ALLOWANCES
+  const scramble: Record<number, number[]> = { ...DEFAULT_ALLOWANCES.scramble }
+  for (const [k, v] of Object.entries((j.scramble as Row) ?? {})) scramble[Number(k)] = (v as unknown[]).map(Number)
+  return {
+    individual: Number(j.individual ?? DEFAULT_ALLOWANCES.individual),
+    bestBall: Number(j.bestBall ?? DEFAULT_ALLOWANCES.bestBall),
+    scramble,
+    altShot: Number(j.altShot ?? DEFAULT_ALLOWANCES.altShot),
+  }
+}
+const mapQuestion = (r: Row): RegistrationQuestion => ({
+  id: r.id, eventId: r.event_id, label: r.label, kind: r.kind, choices: r.choices ?? [], required: r.required, perPlayer: r.per_player, sortOrder: r.sort_order,
+})
+const questionRow = (q: QuestionInput) => ({
+  label: q.label.trim(), kind: q.kind, choices: q.kind === 'choice' ? q.choices.map((c) => c.trim()).filter(Boolean) : [],
+  required: q.required, per_player: q.perPlayer, sort_order: q.sortOrder,
+})
+const sideGameRow = (g: SideGameInput) => ({
+  kind: g.kind, name: g.name.trim(), holes: g.kind === 'skins' ? [] : g.holes, basis: g.basis, carryover: g.carryover,
+  purse_cents: g.purseCents, per_hole_cents: g.perHoleCents, sort_order: g.sortOrder,
+})
+const mapPayout = (r: Row): PayoutTable => ({
+  id: r.id, eventId: r.event_id, basis: r.basis, roundId: r.round_id ?? null, flightId: r.flight_id ?? null, amountsCents: (r.amounts_cents ?? []).map(Number),
 })
 const mapRound = (r: Row): Round => ({
   id: r.id, eventId: r.event_id, roundNumber: r.round_number, date: r.round_date, teeId: r.tee_id,
   segments: (r.segments as Row[]).map((x) => ({ from: Number(x.from), to: Number(x.to), method: x.method, count: Number(x.count ?? 1) })),
   useFlights: r.use_flights ?? true, startType: r.start_type, status: r.status,
+  startTime: r.start_time ? String(r.start_time).slice(0, 5) : null, startingHole: r.starting_hole ?? 1,
+  groupSize: r.group_size ?? 4, teeIntervalMinutes: r.tee_interval_minutes ?? 10,
 })
 const mapScore = (r: Row): Score => ({
   id: r.id, roundId: r.round_id, entryId: r.entry_id, playerId: r.player_id ?? null, hole: r.hole, strokes: r.strokes, version: r.version,
@@ -212,6 +252,9 @@ export class SupabaseRepo implements Repo {
     const r = await run(this.sb.from('courses').insert({ name: name.trim(), city: city.trim() }).select('id').single())
     return (r as Row).id as string
   }
+  async updateTee(teeId: string, t: { rating: number | null; slope: number | null }) {
+    await run(this.sb.from('tees').update({ rating: t.rating, slope: t.slope }).eq('id', teeId))
+  }
   async createTee(courseId: string, name: string) {
     const r = await run(this.sb.from('tees').insert({ course_id: courseId, name: name.trim() }).select('id').single())
     return (r as Row).id as string
@@ -237,6 +280,29 @@ export class SupabaseRepo implements Repo {
     return id as string
   }
 
+  async createEventSetup(s: EventSetup) {
+    const p = {
+      name: s.name.trim(), course_id: s.courseId, timezone: s.timezone, description: s.description,
+      team_size: s.teamSize, cumulative: s.cumulative, tiebreak: s.tiebreak, is_template: s.isTemplate,
+      scoring_basis: s.scoringBasis, net_allowances: s.netAllowances, max_handicap_index: s.maxHandicapIndex, hide_purse: s.hidePurse,
+      rounds: s.rounds.map((r) => ({
+        date: r.date, tee_id: r.teeId, segments: r.segments, start_type: r.startType, start_time: r.startTime,
+        starting_hole: r.startingHole, group_size: r.groupSize, tee_interval_minutes: r.teeIntervalMinutes, use_flights: r.useFlights,
+      })),
+      flights: s.flights,
+      registration: {
+        open: s.registration.open, opens_at: s.registration.opensAt, closes_at: s.registration.closesAt,
+        max_players: s.registration.maxPlayers, waitlist_limit: s.registration.waitlistLimit,
+        entry_fee_cents: s.registration.entryFeeCents, payment_instructions: s.registration.paymentInstructions,
+        show_participants: s.registration.showParticipants,
+      },
+      questions: s.questions.map((q) => ({ ...questionRow(q), per_player: q.perPlayer })),
+      side_games: s.sideGames.map((g) => ({ round_number: g.roundNumber, ...sideGameRow(g) })),
+      payouts: s.payouts.map((x) => ({ basis: x.basis, round_number: x.roundNumber, flight_name: x.flightName, amounts_cents: x.amountsCents })),
+    }
+    return (await run(this.sb.rpc('create_event_setup', { p }))) as string
+  }
+
   async loadBundle(eventId: string): Promise<EventBundle> {
     const evRows = (await run(this.sb.from('events').select('*').eq('id', eventId).limit(1))) as Row[]
     if (!evRows[0]) throw new AppError('Event not found, or it is not published yet.', 'not_found')
@@ -253,6 +319,14 @@ export class SupabaseRepo implements Repo {
       run(this.sb.from('groups').select('*').eq('event_id', eventId).order('name')),
       run(this.sb.from('group_entries').select('*').eq('event_id', eventId)),
       this.listScores(eventId),
+    ])
+    const [questions, sideGames, sideEntries, sideResults, payouts, handicaps] = await Promise.all([
+      run(this.sb.from('registration_questions').select('*').eq('event_id', eventId).order('sort_order')),
+      run(this.sb.from('side_games').select('*').eq('event_id', eventId).order('sort_order')),
+      run(this.sb.from('side_game_entries').select('*').eq('event_id', eventId)),
+      run(this.sb.from('side_game_results').select('*').eq('event_id', eventId)),
+      run(this.sb.from('payout_tables').select('*').eq('event_id', eventId)),
+      run(this.sb.rpc('event_handicaps', { p_event: eventId })),
     ])
     const teeIds = (tees as Row[]).map((t) => t.id)
     const holes = teeIds.length ? ((await run(this.sb.from('holes').select('*').in('tee_id', teeIds).order('number'))) as Row[]) : []
@@ -276,6 +350,15 @@ export class SupabaseRepo implements Repo {
         entryIds: geRows.filter((x) => x.group_id === g.id).map((x) => x.entry_id),
       })),
       scores,
+      questions: (questions as Row[]).map(mapQuestion),
+      sideGames: (sideGames as Row[]).map((g): SideGame => ({
+        id: g.id, eventId: g.event_id, roundId: g.round_id, kind: g.kind, name: g.name, holes: g.holes ?? [], basis: g.basis,
+        carryover: g.carryover, purseCents: g.purse_cents, perHoleCents: g.per_hole_cents, sortOrder: g.sort_order,
+        entryIds: (sideEntries as Row[]).filter((x) => x.game_id === g.id).map((x) => x.entry_id),
+      })),
+      sideGameResults: (sideResults as Row[]).map((r): SideGameResult => ({ gameId: r.game_id, hole: r.hole, playerId: r.player_id, entryId: r.entry_id, note: r.note })),
+      payouts: (payouts as Row[]).map(mapPayout),
+      handicaps: ((handicaps as Row[] | null) ?? []).map((r) => ({ playerId: r.player_id, handicapIndex: Number(r.handicap_index), source: r.source, asOf: r.as_of })),
     }
   }
 
@@ -289,6 +372,10 @@ export class SupabaseRepo implements Repo {
     if (patch.teamSize !== undefined) row.team_size = patch.teamSize
     if (patch.cumulative !== undefined) row.cumulative = patch.cumulative
     if (patch.isTemplate !== undefined) row.is_template = patch.isTemplate
+    if (patch.scoringBasis !== undefined) row.scoring_basis = patch.scoringBasis
+    if (patch.netAllowances !== undefined) row.net_allowances = patch.netAllowances
+    if (patch.maxHandicapIndex !== undefined) row.max_handicap_index = patch.maxHandicapIndex
+    if (patch.hidePurse !== undefined) row.hide_purse = patch.hidePurse
     await run(this.sb.from('events').update(row).eq('id', eventId))
   }
   async updateRegistrationSettings(eventId: string, r: RegistrationSettings) {
@@ -296,6 +383,7 @@ export class SupabaseRepo implements Repo {
       this.sb.from('events').update({
         registration_open: r.open, registration_closes_at: r.closesAt, max_players: r.maxPlayers,
         entry_fee_cents: r.entryFeeCents, payment_instructions: r.paymentInstructions,
+        registration_opens_at: r.opensAt, waitlist_limit: r.waitlistLimit, show_participants: r.showParticipants,
       }).eq('id', eventId),
     )
   }
@@ -306,6 +394,10 @@ export class SupabaseRepo implements Repo {
     if (patch.segments !== undefined) row.segments = patch.segments
     if (patch.useFlights !== undefined) row.use_flights = patch.useFlights
     if (patch.startType !== undefined) row.start_type = patch.startType
+    if (patch.startTime !== undefined) row.start_time = patch.startTime
+    if (patch.startingHole !== undefined) row.starting_hole = patch.startingHole
+    if (patch.groupSize !== undefined) row.group_size = patch.groupSize
+    if (patch.teeIntervalMinutes !== undefined) row.tee_interval_minutes = patch.teeIntervalMinutes
     await run(this.sb.from('rounds').update(row).eq('id', roundId))
   }
   async addRound(eventId: string) {
@@ -388,7 +480,7 @@ export class SupabaseRepo implements Repo {
   }
 
   // ── Registration ──
-  async register(code: string, people: RegistrantInput[], teamName: string, note: string): Promise<RegisterResult> {
+  async register(code: string, people: RegistrantInput[], teamName: string, note: string, answers: AnswerInput[]): Promise<RegisterResult> {
     const res = (await run(
       this.sb.rpc('register_for_event', {
         p_code: code,
@@ -399,9 +491,54 @@ export class SupabaseRepo implements Repo {
         })),
         p_team_name: teamName,
         p_note: note,
+        p_answers: answers.map((a) => ({ question_id: a.questionId, position: a.position, value: a.value })),
       }),
     )) as Row
     return { status: res.status, ref: res.ref, teamName: res.team_name ?? null }
+  }
+  async createQuestion(eventId: string, q: QuestionInput) {
+    const r = await run(this.sb.from('registration_questions').insert({ event_id: eventId, ...questionRow(q) }).select('id').single())
+    return (r as Row).id as string
+  }
+  async updateQuestion(questionId: string, q: QuestionInput) {
+    await run(this.sb.from('registration_questions').update(questionRow(q)).eq('id', questionId))
+  }
+  async deleteQuestion(questionId: string) {
+    await run(this.sb.from('registration_questions').delete().eq('id', questionId))
+  }
+  async listAnswers(eventId: string): Promise<RegistrationAnswer[]> {
+    const rows = await run(this.sb.from('registration_answers').select('*').eq('event_id', eventId))
+    return (rows as Row[]).map((r) => ({ registrationId: r.registration_id, questionId: r.question_id, position: r.position, value: r.value }))
+  }
+  async setRegistrationAnswers(regId: string, answers: AnswerInput[]) {
+    await run(this.sb.rpc('set_registration_answers', { p_reg: regId, p_answers: answers.map((a) => ({ question_id: a.questionId, position: a.position, value: a.value })) }))
+  }
+
+  // ── Side games and payouts ──
+  async createSideGame(eventId: string, roundId: string, g: SideGameInput) {
+    const r = await run(this.sb.from('side_games').insert({ event_id: eventId, round_id: roundId, ...sideGameRow(g) }).select('id').single())
+    return (r as Row).id as string
+  }
+  async updateSideGame(gameId: string, g: SideGameInput) {
+    await run(this.sb.from('side_games').update(sideGameRow(g)).eq('id', gameId))
+  }
+  async deleteSideGame(gameId: string) {
+    await run(this.sb.from('side_games').delete().eq('id', gameId))
+  }
+  async setSideGameEntries(gameId: string, eventId: string, entryIds: string[]) {
+    await run(this.sb.from('side_game_entries').delete().eq('game_id', gameId))
+    if (entryIds.length) await run(this.sb.from('side_game_entries').insert(entryIds.map((e) => ({ game_id: gameId, entry_id: e, event_id: eventId }))))
+  }
+  async setSideGameResult(gameId: string, hole: number, playerId: string | null, note: string) {
+    await run(this.sb.rpc('set_side_game_result', { p_game: gameId, p_hole: hole, p_player: playerId, p_note: note }))
+  }
+  async savePayoutTable(eventId: string, t: Omit<PayoutTable, 'id' | 'eventId'>) {
+    let q = this.sb.from('payout_tables').delete().eq('event_id', eventId).eq('basis', t.basis)
+    q = t.roundId ? q.eq('round_id', t.roundId) : q.is('round_id', null)
+    q = t.flightId ? q.eq('flight_id', t.flightId) : q.is('flight_id', null)
+    await run(q)
+    if (t.amountsCents.some((a) => a > 0))
+      await run(this.sb.from('payout_tables').insert({ event_id: eventId, basis: t.basis, round_id: t.roundId, flight_id: t.flightId, amounts_cents: t.amountsCents }))
   }
   async listRegistrations(eventId: string): Promise<Registration[]> {
     const [regs, people] = await Promise.all([
@@ -539,6 +676,9 @@ export class SupabaseRepo implements Repo {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rounds', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'flights', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'registrations', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'side_games', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'side_game_results', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'payout_tables', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .subscribe()
     return () => void this.sb.removeChannel(ch)
   }

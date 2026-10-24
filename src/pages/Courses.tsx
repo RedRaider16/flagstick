@@ -141,6 +141,11 @@ export function CourseEditor() {
             <button className="btn" type="submit" disabled={!newTee.trim() || busy}>Add tee</button>
           </form>
         </div>
+        {teeId && (() => {
+          const tee = detail.tees.find((t) => t.id === teeId)!
+          return <TeeRatingForm key={tee.id + tee.rating + tee.slope} teeName={tee.name} rating={tee.rating} slope={tee.slope}
+            onSave={(r, sl) => run(async () => { await repo.updateTee(tee.id, { rating: r, slope: sl }); await load() })} busy={busy} />
+        })()}
       </section>
 
       <ErrorNote error={error} />
@@ -225,5 +230,37 @@ export function CourseEditor() {
         </div>
       )}
     </>
+  )
+}
+
+/** Course rating and slope for one tee (needed for net scoring). */
+function TeeRatingForm(props: { teeName: string; rating: number | null; slope: number | null; busy: boolean; onSave: (rating: number | null, slope: number | null) => Promise<unknown> }) {
+  const [rating, setRating] = useState(props.rating === null ? '' : String(props.rating))
+  const [slope, setSlope] = useState(props.slope === null ? '' : String(props.slope))
+  const [err, setErr] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  return (
+    <form className="row" style={{ marginTop: '.8rem', alignItems: 'flex-end' }} onSubmit={(e) => {
+      e.preventDefault()
+      const r = rating.trim() === '' ? null : Number(rating)
+      const sl = slope.trim() === '' ? null : Number(slope)
+      if (r !== null && (Number.isNaN(r) || r < 50 || r > 90)) return setErr('Course rating is a number like 71.4 (between 50 and 90).')
+      if (sl !== null && (!Number.isInteger(sl) || sl < 55 || sl > 155)) return setErr('Slope is a whole number from 55 to 155.')
+      setErr(null)
+      void props.onSave(r === null ? null : Math.round(r * 10) / 10, sl).then(() => setSaved(true))
+    }}>
+      <div className="field" style={{ margin: 0 }}>
+        <label htmlFor="tee-rating">{props.teeName} course rating</label>
+        <input id="tee-rating" type="text" inputMode="decimal" placeholder="e.g. 71.4" value={rating} onChange={(e) => { setRating(e.target.value); setSaved(false) }} style={{ width: 120 }} />
+      </div>
+      <div className="field" style={{ margin: 0 }}>
+        <label htmlFor="tee-slope">Slope</label>
+        <input id="tee-slope" type="text" inputMode="numeric" placeholder="e.g. 125" value={slope} onChange={(e) => { setSlope(e.target.value); setSaved(false) }} style={{ width: 100 }} />
+      </div>
+      <button className="btn" type="submit" disabled={props.busy}>Save rating</button>
+      {saved && <span role="status" style={{ color: 'var(--ok)', fontWeight: 600 }}>Saved</span>}
+      <span className="small muted" style={{ flexBasis: '100%' }}>From the scorecard or the USGA Course Rating database. Needed only for net scoring.</span>
+      {err && <span className="small" role="alert" style={{ color: 'var(--danger)', flexBasis: '100%' }}>{err}</span>}
+    </form>
   )
 }

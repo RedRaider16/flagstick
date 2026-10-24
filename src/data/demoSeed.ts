@@ -7,20 +7,27 @@ import type {
   GolfEvent,
   Group,
   Hole,
+  PayoutTable,
   Player,
   PlayerContact,
   PlayerHandicap,
   Registration,
+  RegistrationAnswer,
+  RegistrationQuestion,
   Round,
   Score,
   ScoreAudit,
+  SideGame,
+  SideGameResult,
   StaffMember,
   Team,
   Tee,
 } from '../domain/types'
 
+import { DEFAULT_ALLOWANCES } from '../scoring/handicap'
+
 export interface DemoState {
-  schema: 3
+  schema: 4
   role: 'admin' | 'scorekeeper' | 'spectator'
   organizers: boolean
   courses: (Course & { ownerId: string })[]
@@ -40,7 +47,17 @@ export interface DemoState {
   staff: StaffMember[]
   registrations: Registration[]
   handicaps: PlayerHandicap[]
+  questions: RegistrationQuestion[]
+  answers: RegistrationAnswer[]
+  sideGames: SideGame[]
+  sideGameResults: SideGameResult[]
+  payouts: PayoutTable[]
 }
+
+/** Defaults for event fields added with the step-by-step setup. */
+const EXTRAS = { scoringBasis: 'gross' as const, netAllowances: DEFAULT_ALLOWANCES, maxHandicapIndex: null, hidePurse: false }
+const REG_EXTRAS = { opensAt: null, waitlistLimit: null, showParticipants: false }
+const SHEET = (startTime: string | null, groupSize: number) => ({ startTime, startingHole: 1, groupSize, teeIntervalMinutes: 10 })
 
 export const DEMO_USER = { id: 'demo-user', email: 'you@demo.invalid' }
 
@@ -82,11 +99,11 @@ export function buildDemoState(): DemoState {
   const r = rng(42)
 
   const course = { id: 'c-mesquite', ownerId: DEMO_USER.id, name: 'Mesquite Ridge Golf Club (fictional)', city: 'Demo City, TX' }
-  const tee: Tee = { id: 't-white', courseId: course.id, name: 'White', rating: null, slope: null }
+  const tee: Tee = { id: 't-white', courseId: course.id, name: 'White', rating: 70.4, slope: 124 }
   const holes: Hole[] = PARS.map((par, i) => ({ teeId: tee.id, number: i + 1, par, yardage: YARDS[i]!, strokeIndex: SI[i]! }))
 
   const state: DemoState = {
-    schema: 3,
+    schema: 4,
     role: 'admin',
     organizers: true,
     courses: [course],
@@ -106,6 +123,11 @@ export function buildDemoState(): DemoState {
     staff: [],
     registrations: [],
     handicaps: [],
+    questions: [],
+    answers: [],
+    sideGames: [],
+    sideGameResults: [],
+    payouts: [],
   }
 
   // ── Event 1: individual stroke play, in progress ──
@@ -113,10 +135,10 @@ export function buildDemoState(): DemoState {
     id: 'ev-classic', publicCode: 'DEMO01', name: 'Demo Fall Classic', courseId: course.id, date: today,
     timezone: 'America/Chicago', description: 'Fictional 16-player individual stroke play event for trying the app.',
     status: 'in_progress', tiebreakPolicy: 'card_back', createdAt: now,
-    registration: { open: false, closesAt: null, maxPlayers: 16, entryFeeCents: 6000, paymentInstructions: 'Pay at the pro shop before your tee time.' },
-    teamSize: 1, cumulative: true, isTemplate: false,
+    registration: { open: false, closesAt: null, maxPlayers: 16, entryFeeCents: 6000, paymentInstructions: 'Pay at the pro shop before your tee time.', ...REG_EXTRAS },
+    teamSize: 1, cumulative: true, isTemplate: false, ...EXTRAS,
   }
-  const r1: Round = { id: 'rd-classic', eventId: e1.id, roundNumber: 1, date: today, teeId: tee.id, segments: [{ from: 1, to: 18, method: 'individual', count: 1 }], useFlights: true, startType: 'tee_times', status: 'open' }
+  const r1: Round = { id: 'rd-classic', eventId: e1.id, roundNumber: 1, date: today, teeId: tee.id, segments: [{ from: 1, to: 18, method: 'individual', count: 1 }], useFlights: true, startType: 'tee_times', status: 'open', ...SHEET('08:00', 4) }
   state.events.push(e1)
   state.rounds.push(r1)
   const thru = [12, 9, 5, 0]
@@ -160,11 +182,16 @@ export function buildDemoState(): DemoState {
       maxPlayers: 16,
       entryFeeCents: 7500,
       paymentInstructions: 'Pay by cash or check at check-in, or Venmo the organizer with your team name.',
+      opensAt: null, waitlistLimit: 8, showParticipants: true,
     },
-    teamSize: 2, cumulative: true, isTemplate: false,
+    teamSize: 2, cumulative: true, isTemplate: false, ...EXTRAS,
   }
-  const r2: Round = { id: 'rd-scramble', eventId: e2.id, roundNumber: 1, date: today, teeId: tee.id, segments: [{ from: 1, to: 18, method: 'scramble', count: 1 }], useFlights: true, startType: 'shotgun', status: 'open' }
+  const r2: Round = { id: 'rd-scramble', eventId: e2.id, roundNumber: 1, date: today, teeId: tee.id, segments: [{ from: 1, to: 18, method: 'scramble', count: 1 }], useFlights: true, startType: 'shotgun', status: 'open', ...SHEET('13:00', 2) }
   state.events.push(e2)
+  state.questions.push(
+    { id: 'q-cart', eventId: e2.id, label: 'Do you need a cart?', kind: 'yes_no', choices: [], required: true, perPlayer: true, sortOrder: 1 },
+    { id: 'q-shirt', eventId: e2.id, label: 'Shirt size', kind: 'choice', choices: ['S', 'M', 'L', 'XL', 'XXL'], required: false, perPlayer: true, sortOrder: 2 },
+  )
   state.rounds.push(r2)
   const teamNames = ['Sand Savers', 'Dogleg Duo', 'Fairway Finders', 'Pin Seekers', 'Bogey Busters', 'Lip Outs']
   for (let t = 0; t < 6; t++) {
@@ -202,13 +229,13 @@ export function buildDemoState(): DemoState {
     id: 'ev-showdown', publicCode: 'DEMO03', name: 'Demo Spring Showdown', courseId: course.id, date: today,
     timezone: 'America/Chicago', description: 'Fictional 3-person teams, best 2 balls of 3 count on every hole, over two days. Two flights.',
     status: 'in_progress', tiebreakPolicy: 'share', createdAt: now,
-    registration: { open: false, closesAt: null, maxPlayers: 36, entryFeeCents: 25000, paymentInstructions: 'Pay at check-in.' },
-    teamSize: 3, cumulative: true, isTemplate: false,
+    registration: { open: false, closesAt: null, maxPlayers: 36, entryFeeCents: 25000, paymentInstructions: 'Pay at check-in.', ...REG_EXTRAS },
+    teamSize: 3, cumulative: true, isTemplate: false, ...EXTRAS, scoringBasis: 'both',
   }
   state.events.push(e3)
   const best2 = [{ from: 1, to: 18, method: 'best_ball' as const, count: 2 }]
-  const d1: Round = { id: 'rd-sd1', eventId: e3.id, roundNumber: 1, date: today, teeId: tee.id, segments: best2, useFlights: true, startType: 'shotgun', status: 'finalized' }
-  const d2: Round = { id: 'rd-sd2', eventId: e3.id, roundNumber: 2, date: tomorrow, teeId: tee.id, segments: best2, useFlights: true, startType: 'shotgun', status: 'open' }
+  const d1: Round = { id: 'rd-sd1', eventId: e3.id, roundNumber: 1, date: today, teeId: tee.id, segments: best2, useFlights: true, startType: 'shotgun', status: 'finalized', ...SHEET('08:30', 2) }
+  const d2: Round = { id: 'rd-sd2', eventId: e3.id, roundNumber: 2, date: tomorrow, teeId: tee.id, segments: best2, useFlights: true, startType: 'shotgun', status: 'open', ...SHEET('08:30', 2) }
   state.rounds.push(d1, d2)
   const flights: Flight[] = [
     { id: 'fl-champ', eventId: e3.id, name: 'Championship', sortOrder: 1 },
@@ -223,6 +250,7 @@ export function buildDemoState(): DemoState {
       const p: Player = { id: `pl-d${t}-${k}`, eventId: e3.id, firstName: first, lastName: last, teeId: null }
       state.players.push(p)
       state.contacts.push({ playerId: p.id, email: '', phone: '' })
+      state.handicaps.push({ playerId: p.id, handicapIndex: Math.round(((t * 3 + k * 7) % 22 + 1.4) * 10) / 10, source: 'Entered by admin', asOf: today })
       ids.push(p.id)
     }
     state.teams.push({ id: `tm-d${t}`, eventId: e3.id, name, playerIds: ids })
@@ -243,6 +271,19 @@ export function buildDemoState(): DemoState {
       state.groups.push({ id: `gr-d${round.roundNumber}-${g}`, roundId: round.id, name: `Hole ${start}`, teeTime: '08:30', startingHole: start, entryIds: [`en-d${g * 2}`, `en-d${g * 2 + 1}`] })
   })
   state.staff.push({ id: 'st-d-admin', eventId: e3.id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
+  const par3s = holes.filter((h) => h.par === 3).map((h) => h.number)
+  state.sideGames.push(
+    { id: 'sg-ctp1', eventId: e3.id, roundId: d1.id, kind: 'closest_to_pin', name: 'Closest to the pin', holes: par3s, basis: 'gross', carryover: false, purseCents: 0, perHoleCents: 5000, sortOrder: 1, entryIds: [] },
+    { id: 'sg-skins1', eventId: e3.id, roundId: d1.id, kind: 'skins', name: 'Gross skins', holes: [], basis: 'gross', carryover: true, purseCents: 30000, perHoleCents: 0, sortOrder: 2, entryIds: [] },
+  )
+  state.sideGameResults.push(
+    { gameId: 'sg-ctp1', hole: par3s[0]!, playerId: 'pl-d1-0', entryId: 'en-d1', note: "6' 4\"" },
+    { gameId: 'sg-ctp1', hole: par3s[1]!, playerId: 'pl-d4-2', entryId: 'en-d4', note: "11' 0\"" },
+  )
+  state.payouts.push(
+    { id: 'po-champ', eventId: e3.id, basis: 'gross', roundId: null, flightId: 'fl-champ', amountsCents: [45000, 30000, 15000] },
+    { id: 'po-first', eventId: e3.id, basis: 'gross', roundId: null, flightId: 'fl-first', amountsCents: [30000, 20000, 10000] },
+  )
   state.log.push({ id: 'lg-d1', eventId: e3.id, action: 'finalized', detail: 'Round 1', actorLabel: DEMO_USER.email, at: now })
 
   // ── Template: the same event set up for next year ──

@@ -10,6 +10,12 @@ import type {
   GolfEvent,
   Group,
   Hole,
+  NetAllowances,
+  PayoutTable,
+  QuestionKind,
+  RegistrationAnswer,
+  ScoringBasis,
+  SideGameKind,
   PaymentMethod,
   PaymentStatus,
   Player,
@@ -72,8 +78,68 @@ export interface ScoreSlot {
   hole: number
 }
 
-export type EventPatch = Partial<Pick<GolfEvent, 'name' | 'date' | 'timezone' | 'description' | 'tiebreakPolicy' | 'teamSize' | 'cumulative' | 'isTemplate'>>
-export type RoundPatch = Partial<Pick<Round, 'date' | 'teeId' | 'segments' | 'useFlights' | 'startType'>>
+export type EventPatch = Partial<Pick<GolfEvent, 'name' | 'date' | 'timezone' | 'description' | 'tiebreakPolicy' | 'teamSize' | 'cumulative' | 'isTemplate' | 'scoringBasis' | 'netAllowances' | 'maxHandicapIndex' | 'hidePurse'>>
+export type RoundPatch = Partial<Pick<Round, 'date' | 'teeId' | 'segments' | 'useFlights' | 'startType' | 'startTime' | 'startingHole' | 'groupSize' | 'teeIntervalMinutes'>>
+
+export interface QuestionInput {
+  label: string
+  kind: QuestionKind
+  choices: string[]
+  required: boolean
+  perPlayer: boolean
+  sortOrder: number
+}
+
+export interface SideGameInput {
+  kind: SideGameKind
+  name: string
+  holes: number[]
+  basis: 'gross' | 'net'
+  carryover: boolean
+  purseCents: number
+  perHoleCents: number
+  sortOrder: number
+}
+
+export interface RoundSetup {
+  date: string
+  teeId: string | null
+  segments: Segment[]
+  startType: StartType
+  startTime: string | null
+  startingHole: number
+  groupSize: number
+  teeIntervalMinutes: number
+  useFlights: boolean
+}
+
+/** Everything the step-by-step New Event screen collects; created in one call. */
+export interface EventSetup {
+  name: string
+  courseId: string
+  timezone: string
+  description: string
+  teamSize: number
+  cumulative: boolean
+  tiebreak: TiebreakPolicy
+  isTemplate: boolean
+  scoringBasis: ScoringBasis
+  netAllowances: NetAllowances
+  maxHandicapIndex: number | null
+  hidePurse: boolean
+  rounds: RoundSetup[]
+  flights: string[]
+  registration: RegistrationSettings
+  questions: QuestionInput[]
+  sideGames: (SideGameInput & { roundNumber: number })[]
+  payouts: { basis: 'gross' | 'net'; roundNumber: number | null; flightName: string | null; amountsCents: number[] }[]
+}
+
+export interface AnswerInput {
+  questionId: string
+  position: number
+  value: string
+}
 
 export interface PlayerInput {
   firstName: string
@@ -111,8 +177,13 @@ export interface Repo {
   createTee(courseId: string, name: string): Promise<string>
   saveHoles(teeId: string, holes: HoleInput[]): Promise<void>
 
+  /** Course rating and slope, needed for net scoring. */
+  updateTee(teeId: string, t: { rating: number | null; slope: number | null }): Promise<void>
+
   // ── Events ──
   createEvent(input: NewEventInput): Promise<string>
+  /** The step-by-step setup: event, rounds, flights, registration, questions, side games and payouts in one go. */
+  createEventSetup(setup: EventSetup): Promise<string>
   loadBundle(eventId: string): Promise<EventBundle>
   updateEvent(eventId: string, patch: EventPatch): Promise<void>
   updateRegistrationSettings(eventId: string, s: RegistrationSettings): Promise<void>
@@ -142,13 +213,30 @@ export interface Repo {
 
   // ── Registration ──
   /** Public: sign up for an event by its code (no account needed). */
-  register(code: string, people: RegistrantInput[], teamName: string, note: string): Promise<RegisterResult>
+  register(code: string, people: RegistrantInput[], teamName: string, note: string, answers: AnswerInput[]): Promise<RegisterResult>
+  createQuestion(eventId: string, q: QuestionInput): Promise<string>
+  updateQuestion(questionId: string, q: QuestionInput): Promise<void>
+  deleteQuestion(questionId: string): Promise<void>
+  /** Admin-only answers to the sign-up questions. */
+  listAnswers(eventId: string): Promise<RegistrationAnswer[]>
+  setRegistrationAnswers(regId: string, answers: AnswerInput[]): Promise<void>
   listRegistrations(eventId: string): Promise<Registration[]>
   updateRegistrationPayment(regId: string, p: { paymentStatus: PaymentStatus; paymentMethod: PaymentMethod; amountPaidCents: number | null; adminNote: string }): Promise<void>
   promoteRegistration(regId: string): Promise<void>
   cancelRegistration(regId: string, reason: string): Promise<void>
   listHandicaps(eventId: string): Promise<PlayerHandicap[]>
   setPlayerHandicap(playerId: string, index: number | null, source: string, asOf: string): Promise<void>
+
+  // ── Side games and payouts ──
+  createSideGame(eventId: string, roundId: string, g: SideGameInput): Promise<string>
+  updateSideGame(gameId: string, g: SideGameInput): Promise<void>
+  deleteSideGame(gameId: string): Promise<void>
+  /** Who plays a side game; empty = everyone. */
+  setSideGameEntries(gameId: string, eventId: string, entryIds: string[]): Promise<void>
+  /** Closest to the pin / long drive winner on a hole (null player clears it). Staff only. */
+  setSideGameResult(gameId: string, hole: number, playerId: string | null, note: string): Promise<void>
+  /** Save place money for one competition; empty amounts removes it. */
+  savePayoutTable(eventId: string, t: Omit<PayoutTable, 'id' | 'eventId'>): Promise<void>
 
   // ── Groups ──
   createGroup(roundId: string, eventId: string, g: GroupInput): Promise<string>
@@ -182,4 +270,4 @@ export interface Repo {
   subscribe(eventId: string, onChange: (what: 'scores' | 'all') => void): () => void
 }
 
-export type { Player, Group, Round }
+export type { Player, Group, Round, PayoutTable }

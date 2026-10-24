@@ -30,6 +30,8 @@ export interface EvEntry {
   name: string
   status: EntryStatus
   flightId: string | null
+  /** Why this entry can't be ranked on this leaderboard (e.g. net without a Handicap Index). */
+  excluded?: string
 }
 
 export interface EvFlight {
@@ -74,6 +76,8 @@ export interface EvRow {
   thru: string
   rounds: EvRoundCell[]
   tiebreakNote: string | null
+  /** Set when the entry is listed but can't be ranked here. */
+  note: string | null
 }
 
 export interface EvGroup {
@@ -145,6 +149,7 @@ export function computeEventLeaderboard(input: EvInput): EventLeaderboard {
       thru,
       rounds: cells,
       tiebreakNote: null,
+      note: e.excluded ?? null,
     }
   })
 
@@ -161,8 +166,9 @@ export function computeEventLeaderboard(input: EvInput): EventLeaderboard {
   return { groups, final: input.final, tiebreak: input.tiebreak }
 
   function rank(list: EvRow[], flightId: string | null, name: string): EvGroup {
-    const ranked = list.filter((r) => r.status === 'active' && r.holesPlayed > 0)
-    const notStarted = list.filter((r) => r.status === 'active' && r.holesPlayed === 0)
+    const ranked = list.filter((r) => r.status === 'active' && !r.note && r.holesPlayed > 0)
+    const notStarted = list.filter((r) => r.status === 'active' && !r.note && r.holesPlayed === 0)
+    const excluded = list.filter((r) => r.status === 'active' && r.note)
     const out = list.filter((r) => r.status !== 'active')
     const cosmetic = (a: EvRow, b: EvRow) => b.holesPlayed - a.holesPlayed || a.name.localeCompare(b.name)
     ranked.sort((a, b) => a.toPar! - b.toPar! || cosmetic(a, b))
@@ -203,7 +209,8 @@ export function computeEventLeaderboard(input: EvInput): EventLeaderboard {
     const statusOrder: EntryStatus[] = ['dnf', 'ns', 'wd', 'dq']
     out.sort((a, b) => statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status) || a.name.localeCompare(b.name))
     for (const r of out) r.positionLabel = r.status.toUpperCase()
-    return { flightId, name, rows: [...order.flat(), ...notStarted, ...out], unresolvedTies }
+    excluded.sort((a, b) => a.name.localeCompare(b.name))
+    return { flightId, name, rows: [...order.flat(), ...notStarted, ...excluded, ...out], unresolvedTies }
   }
 }
 

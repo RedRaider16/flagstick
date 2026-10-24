@@ -1,6 +1,9 @@
 // UI-facing helpers that turn an EventBundle into what screens need.
 import { computeEventLeaderboard, type EventLeaderboard, type EvRound } from '../scoring/event'
 import { countingCards, countingPar, describeFormat, segmentFor, type Segment } from '../scoring/formats'
+import { courseHandicap, entryHandicaps, HANDICAP_PROBLEM_TEXT, netCard, type HandicapProblem } from '../scoring/handicap'
+import { computeSkins, splitPayouts, type SkinsResult } from '../scoring/sidegames'
+import type { PayoutTable, ScoringBasis, SideGame } from './types'
 import { entryName, type Entry, type EventBundle, type Group, type Hole, type Player, type Round, type Score, type Tee } from './types'
 
 export const isTeamEvent = (b: EventBundle) => b.event.teamSize > 1
@@ -51,7 +54,48 @@ export function slotScore(b: EventBundle, roundId: string, entryId: string, play
   return b.scores.find((s) => s.roundId === roundId && s.entryId === entryId && s.hole === hole && (s.playerId ?? null) === playerId)
 }
 
-function evRound(b: EventBundle, round: Round): EvRound {
+export type Basis = 'gross' | 'net'
+
+/** Which leaderboards an event shows. */
+export const basesOf = (s: ScoringBasis): Basis[] => (s === 'both' ? ['gross', 'net'] : [s])
+
+/** Course Handicap for a player on a tee, or the reason it can't be worked out. */
+export function playerCourseHandicap(b: EventBundle, playerId: string, teeId: string | null): number | HandicapProblem {
+  const tee = teeOf(b, teeId)
+  if (!tee) return 'no_rating'
+  const hs = teeHoles(b, tee.id)
+  const hi = b.handicaps.find((h) => h.playerId === playerId)?.handicapIndex
+  return courseHandicap(hi, { rating: tee.rating, slope: tee.slope, par: hs.reduce((a, h) => a + h.par, 0) }, b.event.maxHandicapIndex)
+}
+
+/** Net cards for a round: entryId → hole → net counting score, plus entries that can't be scored net. */
+export function netCards(b: EventBundle, round: Round): { cards: Map<string, Map<number, number>>; excluded: Map<string, string> } {
+  const cards = new Map<string, Map<number, number>>()
+  const excluded = new Map<string, string>()
+  const holes = roundHoles(b, round)
+  const si = new Map(holes.map((h) => [h.number, h.strokeIndex]))
+  const scores = roundScores(b, round.id)
+  for (const e of b.entries) {
+    const players = entryPlayers(b, e)
+    const hcp = entryHandicaps(
+      round.segments,
+      players.map((p) => ({ playerId: p.id, courseHandicap: playerCourseHandicap(b, p.id, !isTeamEvent(b) && p.teeId ? p.teeId : round.teeId) })),
+      b.event.teamSize,
+      b.event.netAllowances,
+    )
+    if (typeof hcp === 'string') {
+      excluded.set(e.id, HANDICAP_PROBLEM_TEXT[hcp])
+      continue
+    }
+    // Individual events on another tee: that tee's stroke index.
+    const own = !isTeamEvent(b) && players[0]?.teeId && players[0].teeId !== round.teeId ? teeHoles(b, players[0].teeId) : null
+    const siFor = own && own.length === 18 ? new Map(own.map((h) => [h.number, h.strokeIndex])) : si
+    cards.set(e.id, netCard(round.segments, scores.filter((s) => s.entryId === e.id), hcp, siFor))
+  }
+  return { cards, excluded }
+}
+
+function evRound(b: EventBundle, round: Round, basis: Basis = 'gross', excluded?: Map<string, string>): EvRound {
   const holes = roundHoles(b, round)
   const segs: Segment[] = round.segments
   const parFor = (hs: Hole[]) => hs.map((h) => ({ number: h.number, par: countingPar(segmentFor(segs, h.number), h.par) }))
@@ -69,7 +113,11 @@ function evRound(b: EventBundle, round: Round): EvRound {
     id: round.id,
     number: round.roundNumber,
     holes: parFor(holes),
-    cards: countingCards(segs, roundScores(b, round.id)),
+    cards: basis === 'net' ? (() => {
+      const n = netCards(b, round)
+      n.excluded.forEach((v, k) => excluded?.set(k, v))
+      return n.cards
+    })() : countingCards(segs, roundScores(b, round.id)),
     startingHole: new Map(b.entries.map((e) => [e.id, groupOfEntry(groups, e.id)?.startingHole ?? 1])),
     entryPars,
   }
@@ -77,13 +125,15 @@ function evRound(b: EventBundle, round: Round): EvRound {
 
 export type Scope = 'overall' | string
 
-/** Leaderboard for the whole event ('overall') or one round (its id). */
-export function buildEventLeaderboard(b: EventBundle, scope: Scope): EventLeaderboard {
+/** Leaderboard for the whole event ('overall') or one round (its id), gross or net. */
+export function buildEventLeaderboard(b: EventBundle, scope: Scope, basis: Basis = 'gross'): EventLeaderboard {
   const rounds = scope === 'overall' ? b.rounds : b.rounds.filter((r) => r.id === scope)
   const byFlight = scope === 'overall' ? b.rounds.some((r) => r.useFlights) : rounds.some((r) => r.useFlights)
+  const excluded = new Map<string, string>()
+  const evRounds = rounds.filter((r) => r.teeId).map((r) => evRound(b, r, basis, excluded))
   return computeEventLeaderboard({
-    rounds: rounds.filter((r) => r.teeId).map((r) => evRound(b, r)),
-    entries: b.entries.map((e) => ({ id: e.id, name: nameOf(b, e), status: e.status, flightId: e.flightId })),
+    rounds: evRounds,
+    entries: b.entries.map((e) => ({ id: e.id, name: nameOf(b, e), status: e.status, flightId: e.flightId, excluded: excluded.get(e.id) })),
     flights: b.flights.map((f) => ({ id: f.id, name: f.name })),
     byFlight,
     tiebreak: b.event.tiebreakPolicy,
@@ -159,4 +209,39 @@ export function nextYearSameWeekday(iso: string): string {
   const diff = (d.getUTCDay() - target.getUTCDay() + 7) % 7
   target.setUTCDate(target.getUTCDate() + (diff > 3 ? diff - 7 : diff))
   return target.toISOString().slice(0, 10)
+}
+
+/** The payout table for a leaderboard group, if any. */
+export function payoutTableFor(b: EventBundle, basis: Basis, scope: Scope, flightId: string | null): PayoutTable | undefined {
+  const roundId = scope === 'overall' || b.rounds.length === 1 ? null : scope
+  return b.payouts.find((t) => t.basis === basis && t.roundId === roundId && t.flightId === flightId)
+}
+
+/** Place money for a leaderboard: entryId → cents (empty when no payouts are set). */
+export function leaderboardPayouts(b: EventBundle, lb: EventLeaderboard, basis: Basis, scope: Scope): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const g of lb.groups) {
+    const t = payoutTableFor(b, basis, scope, g.flightId)
+    if (!t) continue
+    splitPayouts(g.rows, t.amountsCents).forEach((v, k) => out.set(k, v))
+  }
+  return out
+}
+
+/** Skins for a side game, from the round's gross or net counting scores. */
+export function skinsFor(b: EventBundle, game: SideGame): SkinsResult & { excluded: Map<string, string> } {
+  const round = b.rounds.find((r) => r.id === game.roundId)
+  const ids = game.entryIds.length ? game.entryIds : b.entries.filter((e) => e.status === 'active').map((e) => e.id)
+  const entries = b.entries.filter((e) => ids.includes(e.id) && e.status === 'active')
+  if (!round) return { ...computeSkins([], { carryover: game.carryover, purseCents: game.purseCents }), excluded: new Map() }
+  let cards: Map<string, Map<number, number>>
+  let excluded = new Map<string, string>()
+  if (game.basis === 'net') {
+    const n = netCards(b, round)
+    cards = n.cards
+    excluded = n.excluded
+  } else cards = countingCards(round.segments, roundScores(b, round.id))
+  const playing = entries.filter((e) => !excluded.has(e.id))
+  const res = computeSkins(playing.map((e) => ({ id: e.id, name: nameOf(b, e), card: cards.get(e.id) ?? new Map() })), { carryover: game.carryover, purseCents: game.purseCents })
+  return { ...res, excluded }
 }

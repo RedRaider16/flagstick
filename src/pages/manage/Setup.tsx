@@ -3,11 +3,12 @@ import { Link, useNavigate } from 'react-router'
 import { useApp, usePath } from '../../app/context'
 import { useAction } from '../../app/hooks'
 import { FormatEditor } from '../../components/FormatEditor'
+import { ScoringFields, TeeSheetFields, type Scoring } from '../../components/SetupFields'
 import { ErrorNote, Notice, useReasonDialog } from '../../components/ui'
 import { nextYearSameWeekday, roundScores } from '../../domain/derive'
 import { TEAM_SIZE_LABEL, TIEBREAK_LABEL, type Round, type StartType, type Tee, type TiebreakPolicy } from '../../domain/types'
 import { defaultSegments, describeFormat, segmentsProblem, type Segment } from '../../scoring/formats'
-import { TIMEZONES } from '../NewEvent'
+import { TIMEZONES } from '../../domain/setup'
 import { useManage } from './ManageLayout'
 
 type TeeOption = Tee & { holeCount: number }
@@ -141,6 +142,8 @@ export function Setup() {
         ))}
       </section>
 
+      <ScoringPanel />
+
       <CopyEvent />
     </>
   )
@@ -153,13 +156,14 @@ function RoundEditor(props: {
   disabled: boolean
   hasScores: boolean
   canDelete: boolean
-  onSave: (patch: { date: string; teeId: string | null; segments: Segment[]; startType: StartType; useFlights: boolean }) => Promise<void>
+  onSave: (patch: { date: string; teeId: string | null; segments: Segment[]; startType: StartType; useFlights: boolean; startTime: string | null; startingHole: number; groupSize: number; teeIntervalMinutes: number }) => Promise<void>
   onDelete: () => void
 }) {
   const { round: r, teamSize } = props
   const { busy, error, run } = useAction()
   const initial = () => ({
     date: r.date, teeId: r.teeId, startType: r.startType, useFlights: r.useFlights,
+    startTime: r.startTime, startingHole: r.startingHole, groupSize: r.groupSize, teeIntervalMinutes: r.teeIntervalMinutes,
     segments: segmentsProblem(r.segments, teamSize) ? defaultSegments(teamSize) : r.segments,
   })
   const [f, setF] = useState(initial)
@@ -191,14 +195,8 @@ function RoundEditor(props: {
           </select>
           {props.hasScores && <span className="hint">Par comes from this tee; changing it changes scores to par.</span>}
         </div>
-        <div className="field">
-          <label htmlFor={`${id}-start`}>Start</label>
-          <select id={`${id}-start`} value={f.startType} onChange={(e) => set({ startType: e.target.value as StartType })}>
-            <option value="tee_times">Tee times</option>
-            <option value="shotgun">Shotgun</option>
-          </select>
-        </div>
       </fieldset>
+      <TeeSheetFields id={`${id}-ts`} teamSize={teamSize} disabled={props.disabled} value={f} onChange={(v) => set(v)} />
       <fieldset disabled={props.disabled || props.hasScores}>
         <legend>Format</legend>
         <FormatEditor id={id} teamSize={teamSize} value={f.segments} onChange={(segments) => set({ segments })} />
@@ -270,5 +268,31 @@ function CopyEvent() {
       )}
       <button className="btn primary" type="submit" disabled={busy || !name.trim() || !date}>{busy ? 'Copying…' : asTemplate ? 'Save template' : 'Create event'}</button>
     </form>
+  )
+}
+
+function ScoringPanel() {
+  const { bundle, reload } = useManage()
+  const { repo } = useApp()
+  const { event } = bundle
+  const { busy, error, run } = useAction()
+  const initial: Scoring = { scoringBasis: event.scoringBasis, netAllowances: event.netAllowances, maxHandicapIndex: event.maxHandicapIndex, hidePurse: event.hidePurse }
+  const [v, setV] = useState(initial)
+  const [saved, setSaved] = useState(false)
+  const dirty = JSON.stringify(v) !== JSON.stringify(initial)
+  const unrated = bundle.tees.filter((t) => bundle.rounds.some((r) => r.teeId === t.id) && (t.rating === null || t.slope === null))
+  return (
+    <section className="panel">
+      <h2>Scoring</h2>
+      <ErrorNote error={error} />
+      <ScoringFields value={v} onChange={(x) => { setV(x); setSaved(false) }} teamSize={event.teamSize} methods={[...new Set(bundle.rounds.flatMap((r) => r.segments.map((s) => s.method)))]} disabled={event.status === 'finalized'} />
+      {v.scoringBasis !== 'gross' && unrated.length > 0 && (
+        <Notice kind="warn">Net scoring needs a course rating and slope for the {unrated.map((t) => t.name).join(' and ')} tee{unrated.length === 1 ? '' : 's'}. Add them under Courses.</Notice>
+      )}
+      <div className="row">
+        <button className="btn primary" type="button" disabled={busy || !dirty} onClick={() => void run(async () => { await repo.updateEvent(event.id, v); await reload(); setSaved(true) })}>Save scoring</button>
+        {saved && !dirty && <span role="status" style={{ color: 'var(--ok)', fontWeight: 600 }}>Saved</span>}
+      </div>
+    </section>
   )
 }

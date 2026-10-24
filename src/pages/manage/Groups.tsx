@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
 import { useApp, usePath } from '../../app/context'
 import { useAction } from '../../app/hooks'
@@ -29,9 +29,15 @@ export function Groups() {
   const final = event.status === 'finalized'
   const unit = isTeam ? 'team' : 'player'
 
-  const [size, setSize] = useState(isTeam ? (event.teamSize >= 3 ? 1 : 2) : 4)
-  const [first, setFirst] = useState('08:00')
-  const [interval, setIntervalMins] = useState(10)
+  const [size, setSize] = useState(round.groupSize)
+  const [first, setFirst] = useState(round.startTime ?? '08:00')
+  const [interval, setIntervalMins] = useState(round.teeIntervalMinutes)
+  // Defaults come from the round's tee sheet (Event & course).
+  useEffect(() => {
+    setSize(round.groupSize)
+    setFirst(round.startTime ?? '08:00')
+    setIntervalMins(round.teeIntervalMinutes)
+  }, [round.id, round.groupSize, round.startTime, round.teeIntervalMinutes])
   const [newName, setNewName] = useState('')
   const [newTime, setNewTime] = useState('')
   const [newHole, setNewHole] = useState(1)
@@ -54,10 +60,11 @@ export function Groups() {
         let teeTime: string | null
         let startingHole = 1
         if (shotgun) {
-          // fill holes 1..18 once, then second groups (1B, 2B …)
-          let hole = 1
+          // fill holes once from the round's first hole, then second groups (1B, 2B …)
+          let hole = round.startingHole
+          const order = Array.from({ length: 18 }, (_, k) => ((round.startingHole - 1 + k) % 18) + 1)
           for (let pass = 0; pass < 5; pass++) {
-            const h = Array.from({ length: 18 }, (_, k) => k + 1).find((x) => (holeUse.get(x) ?? 0) === pass)
+            const h = order.find((x) => (holeUse.get(x) ?? 0) === pass)
             if (h) { hole = h; break }
           }
           holeUse.set(hole, (holeUse.get(hole) ?? 0) + 1)
@@ -114,7 +121,7 @@ export function Groups() {
             <div className="field">
               <label htmlFor="g-size">{isTeam ? 'Teams per group' : 'Players per group'}</label>
               <select id="g-size" value={size} onChange={(e) => setSize(Number(e.target.value))}>
-                {(isTeam ? [1, 2] : [2, 3, 4, 5]).map((n) => <option key={n} value={n}>{n}</option>)}
+                {[...new Set([...(isTeam ? [1, 2] : [2, 3, 4, 5]), size])].sort().map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
             <div className="field">

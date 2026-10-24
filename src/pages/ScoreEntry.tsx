@@ -5,6 +5,7 @@ import { useAccess, useBundle, useOnline, useTitle } from '../app/hooks'
 import { cellKey, useScoreWriter, type CellState } from '../app/useScoreWriter'
 import type { ScoreSlot } from '../data/repo'
 import { ErrorNote, Loading, Notice, useReasonDialog } from '../components/ui'
+import { HoleWinnersForm } from './manage/SideGames'
 import { buildEventLeaderboard, currentRound, entryPlayers, formatOf, formatTeeTime, holesDone, isTeamEvent, nameOf, roundGroups, roundHoles, slotScore, teeHoles } from '../domain/derive'
 import { ENTRY_STATUS_LABEL, playerName, type Entry, type EventBundle, type Player, type Round } from '../domain/types'
 import { countingScore, segmentFor } from '../scoring/formats'
@@ -96,7 +97,7 @@ function NoAccess({ code }: { code: string | null }) {
 export function ScoreGroup() {
   const { eventId, groupId } = useParams()
   const p = usePath()
-  const { bundle, setBundle, error } = useBundle(eventId)
+  const { bundle, setBundle, error, reload } = useBundle(eventId)
   const access = useAccess(eventId)
   const online = useOnline()
   const writer = useScoreWriter(bundle, setBundle)
@@ -245,6 +246,15 @@ export function ScoreGroup() {
           </section>
         )
       })}
+
+      {bundle.sideGames.filter((g) => g.roundId === round.id && g.kind !== 'skins' && g.holes.includes(holeNo)).map((g) => (
+        <section key={g.id} className="entrant contest" aria-label={`${g.name} on hole ${holeNo}`}>
+          <div className="entrant-name">{g.name} <span className="muted small">hole {holeNo}</span></div>
+          <p className="small muted" style={{ margin: '.2rem 0 0' }}>If someone in your group beats the current winner, pick them and save.</p>
+          <HoleWinnersForm bundle={bundle} reload={reload} game={g} holes={[holeNo]} disabled={!!blocked}
+            players={entries.flatMap((e) => entryPlayers(bundle, e)).map((p) => ({ id: p.id, label: playerName(p) }))} />
+        </section>
+      ))}
 
       <div className="row" style={{ justifyContent: 'space-between', marginTop: '1rem' }}>
         <button className="btn" type="button" disabled={idx === 0} onClick={() => setIdx(idx - 1)} style={{ minHeight: 'var(--tap)' }}>Previous hole</button>

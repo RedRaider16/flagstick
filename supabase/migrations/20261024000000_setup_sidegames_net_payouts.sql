@@ -25,6 +25,10 @@ alter table public.rounds
   add column group_size int not null default 4 check (group_size between 1 and 6),
   add column tee_interval_minutes int not null default 10 check (tee_interval_minutes between 5 and 30);
 
+-- Group size counts entries: 4 players, 2 two-person teams, or one larger team.
+update public.rounds r set group_size = case e.team_size when 1 then 4 when 2 then 2 else 1 end
+  from public.events e where e.id = r.event_id;
+
 -- ── Events: registration, scoring basis, purse visibility ──────────────────
 
 alter table public.events

@@ -14,6 +14,7 @@ import {
   type RegistrantInput,
   type RegisterResult,
   type RegistrationSettings,
+  type PayoutTable,
   type Score,
   type StaffRole,
 } from '../domain/types'
@@ -21,9 +22,10 @@ import { defaultSegments, segmentFor, segmentsProblem } from '../scoring/formats
 import { validateHoleLayout, type HoleInput } from '../scoring/validation'
 import { AppError } from './errors'
 import { buildDemoState, DEMO_USER, type DemoState } from './demoSeed'
-import type { Access, CourseDetail, EventPatch, GroupInput, NewEventInput, PlayerInput, Repo, RoundPatch, ScoreSlot, SessionUser } from './repo'
+import { DEFAULT_ALLOWANCES } from '../scoring/handicap'
+import type { Access, AnswerInput, CourseDetail, EventPatch, EventSetup, GroupInput, NewEventInput, PlayerInput, QuestionInput, Repo, RoundPatch, ScoreSlot, SessionUser, SideGameInput } from './repo'
 
-const KEY = 'flagstick-demo-v3'
+const KEY = 'flagstick-demo-v4'
 const CHANNEL = 'flagstick-demo'
 
 const uid = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2))
@@ -35,7 +37,7 @@ function loadState(): DemoState {
     const raw = localStorage.getItem(KEY)
     if (raw) {
       const s = JSON.parse(raw) as DemoState
-      if (s.schema === 3) return s
+      if (s.schema === 4) return s
     }
   } catch {
     /* storage unavailable or corrupt — fall back to a fresh demo */
@@ -169,6 +171,16 @@ export class DemoRepo implements Repo {
     this.commit()
     return id
   }
+  async updateTee(teeId: string, t: { rating: number | null; slope: number | null }) {
+    if (this.s.role !== 'admin') throw new AppError('Only organizers can edit courses.', 'forbidden')
+    if (t.rating !== null && (t.rating < 50 || t.rating > 90)) throw new AppError('Course rating must be between 50 and 90.', 'invalid')
+    if (t.slope !== null && (!Number.isInteger(t.slope) || t.slope < 55 || t.slope > 155)) throw new AppError('Slope must be a whole number from 55 to 155.', 'invalid')
+    const tee = this.s.tees.find((x) => x.id === teeId)
+    if (!tee) throw new AppError('Tee not found.', 'not_found')
+    tee.rating = t.rating
+    tee.slope = t.slope
+    this.commit()
+  }
   async createTee(courseId: string, name: string) {
     if (this.s.role !== 'admin') throw new AppError('Only organizers can add tees.', 'forbidden')
     if (this.s.tees.some((t) => t.courseId === courseId && t.name.toLowerCase() === name.trim().toLowerCase()))
@@ -202,12 +214,80 @@ export class DemoRepo implements Repo {
       id, publicCode: code, name: input.name.trim(), courseId: input.courseId, date: input.date, timezone: input.timezone,
       description: input.description, status: 'draft', tiebreakPolicy: input.tiebreak, createdAt: nowIso(),
       registration: { ...NO_REGISTRATION }, teamSize: input.teamSize, cumulative: true, isTemplate: false,
+      scoringBasis: 'gross', netAllowances: DEFAULT_ALLOWANCES, maxHandicapIndex: null, hidePurse: false,
     })
-    this.s.rounds.push({ id: uid(), eventId: id, roundNumber: 1, date: input.date, teeId: input.teeId, segments: input.segments, useFlights: true, startType: input.startType, status: 'open' })
+    this.s.rounds.push({
+      id: uid(), eventId: id, roundNumber: 1, date: input.date, teeId: input.teeId, segments: input.segments, useFlights: true, startType: input.startType, status: 'open',
+      startTime: null, startingHole: 1, groupSize: input.teamSize === 1 ? 4 : input.teamSize === 2 ? 2 : 1, teeIntervalMinutes: 10,
+    })
     this.s.staff.push({ id: uid(), eventId: id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
     this.log(id, 'event_created', input.name)
     this.commit()
     return id
+  }
+
+  private newCode() {
+    let code: string
+    do code = Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('')
+    while (this.s.events.some((e) => e.publicCode === code))
+    return code
+  }
+
+  async createEventSetup(x: EventSetup) {
+    if (this.s.role !== 'admin') throw new AppError('Only organizers can create events.', 'forbidden')
+    if (!x.name.trim()) throw new AppError('Give the event a name.', 'invalid')
+    if (!x.courseId || !this.s.courses.some((c) => c.id === x.courseId)) throw new AppError('Course not found.', 'forbidden')
+    if (!x.rounds.length) throw new AppError('An event needs at least one round.', 'invalid')
+    if (x.rounds.length > 6) throw new AppError('An event can have at most 6 rounds.', 'conflict')
+    for (const r of x.rounds) {
+      const problem = segmentsProblem(r.segments, x.teamSize)
+      if (problem) throw new AppError(problem, 'conflict')
+    }
+    const id = uid()
+    this.s.events.push({
+      id, publicCode: this.newCode(), name: x.name.trim().slice(0, 120), courseId: x.courseId, date: x.rounds[0]!.date, timezone: x.timezone,
+      description: x.description, status: 'draft', tiebreakPolicy: x.tiebreak, createdAt: nowIso(),
+      registration: { ...x.registration, open: x.registration.open && !x.isTemplate },
+      teamSize: x.teamSize, cumulative: x.cumulative, isTemplate: x.isTemplate,
+      scoringBasis: x.scoringBasis, netAllowances: x.netAllowances, maxHandicapIndex: x.maxHandicapIndex, hidePurse: x.hidePurse,
+    })
+    const roundIds = x.rounds.map((r, i) => {
+      const rid = uid()
+      this.s.rounds.push({ id: rid, eventId: id, roundNumber: i + 1, status: 'open', ...clone(r) })
+      return rid
+    })
+    const flightIds = new Map<string, string>()
+    x.flights.forEach((name, i) => {
+      const fid = uid()
+      flightIds.set(name, fid)
+      this.s.flights.push({ id: fid, eventId: id, name: name.trim().slice(0, 40), sortOrder: i + 1 })
+    })
+    x.questions.forEach((q, i) => this.s.questions.push({ id: uid(), eventId: id, ...this.cleanQuestion({ ...q, sortOrder: i + 1 }) }))
+    x.sideGames.forEach((g, i) => {
+      const rid = roundIds[g.roundNumber - 1]
+      if (!rid) throw new AppError("A side game refers to a round that doesn't exist.", 'invalid')
+      this.s.sideGames.push({ id: uid(), eventId: id, roundId: rid, ...this.cleanGame({ ...g, sortOrder: i + 1 }), entryIds: [] })
+    })
+    for (const t of x.payouts)
+      this.s.payouts.push({
+        id: uid(), eventId: id, basis: t.basis, roundId: t.roundNumber ? roundIds[t.roundNumber - 1] ?? null : null,
+        flightId: t.flightName ? flightIds.get(t.flightName) ?? null : null, amountsCents: t.amountsCents,
+      })
+    this.s.staff.push({ id: uid(), eventId: id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
+    this.log(id, 'event_created', x.name)
+    this.commit()
+    return id
+  }
+  private cleanQuestion(q: QuestionInput): QuestionInput {
+    if (!q.label.trim()) throw new AppError('Each question needs some text.', 'invalid')
+    const choices = q.kind === 'choice' ? q.choices.map((c) => c.trim()).filter(Boolean) : []
+    if (q.kind === 'choice' && choices.length < 2) throw new AppError(`"${q.label}" needs at least two options.`, 'invalid')
+    return { ...q, label: q.label.trim().slice(0, 120), choices }
+  }
+  private cleanGame(g: SideGameInput): SideGameInput {
+    if (!g.name.trim()) throw new AppError('Give the side game a name.', 'invalid')
+    if (g.holes.some((h) => h < 1 || h > 18)) throw new AppError('Holes must be 1–18.', 'invalid')
+    return { ...g, name: g.name.trim().slice(0, 60), holes: g.kind === 'skins' ? [] : [...new Set(g.holes)].sort((a, b) => a - b) }
   }
 
   async loadBundle(eventId: string): Promise<EventBundle> {
@@ -231,6 +311,13 @@ export class DemoRepo implements Repo {
       entries: this.s.entries.filter((e) => e.eventId === eventId),
       groups: this.s.groups.filter((g) => roundIds.has(g.roundId)),
       scores: this.s.scores.filter((s) => roundIds.has(s.roundId)),
+      questions: this.s.questions.filter((q) => q.eventId === eventId).sort((a, b) => a.sortOrder - b.sortOrder),
+      sideGames: this.s.sideGames.filter((g) => g.eventId === eventId).sort((a, b) => a.sortOrder - b.sortOrder),
+      sideGameResults: this.s.sideGameResults.filter((r) => this.s.sideGames.some((g) => g.id === r.gameId && g.eventId === eventId)),
+      payouts: event.hidePurse && !access.role ? [] : this.s.payouts.filter((x) => x.eventId === eventId),
+      handicaps: access.role === 'admin' || event.scoringBasis !== 'gross'
+        ? this.s.handicaps.filter((h) => this.s.players.some((p) => p.id === h.playerId && p.eventId === eventId))
+        : [],
     })
   }
 
@@ -325,13 +412,28 @@ export class DemoRepo implements Repo {
     while (this.s.events.some((e) => e.publicCode === code))
     const id = uid()
     const closes = src.registration.closesAt ? new Date(Date.parse(src.registration.closesAt) + shiftDays * 864e5).toISOString() : null
+    const opens = src.registration.opensAt ? new Date(Date.parse(src.registration.opensAt) + shiftDays * 864e5).toISOString() : null
     this.s.events.push({
       ...clone(src), id, publicCode: code, name: name.trim(), date, status: 'draft', createdAt: nowIso(), isTemplate: asTemplate,
-      registration: { ...src.registration, open: false, closesAt: closes },
+      registration: { ...src.registration, open: false, closesAt: closes, opensAt: opens },
     })
-    for (const r of this.s.rounds.filter((x) => x.eventId === eventId))
-      this.s.rounds.push({ ...clone(r), id: uid(), eventId: id, date: shift(r.date), status: 'open' })
-    for (const f of this.s.flights.filter((x) => x.eventId === eventId)) this.s.flights.push({ ...f, id: uid(), eventId: id })
+    const roundMap = new Map<string, string>()
+    for (const r of this.s.rounds.filter((x) => x.eventId === eventId)) {
+      const rid = uid()
+      roundMap.set(r.id, rid)
+      this.s.rounds.push({ ...clone(r), id: rid, eventId: id, date: shift(r.date), status: 'open' })
+    }
+    const flightMap = new Map<string, string>()
+    for (const f of this.s.flights.filter((x) => x.eventId === eventId)) {
+      const fid = uid()
+      flightMap.set(f.id, fid)
+      this.s.flights.push({ ...f, id: fid, eventId: id })
+    }
+    for (const q of this.s.questions.filter((x) => x.eventId === eventId)) this.s.questions.push({ ...clone(q), id: uid(), eventId: id })
+    for (const g of this.s.sideGames.filter((x) => x.eventId === eventId))
+      this.s.sideGames.push({ ...clone(g), id: uid(), eventId: id, roundId: roundMap.get(g.roundId)!, entryIds: [] })
+    for (const t of this.s.payouts.filter((x) => x.eventId === eventId))
+      this.s.payouts.push({ ...clone(t), id: uid(), eventId: id, roundId: t.roundId ? roundMap.get(t.roundId) ?? null : null, flightId: t.flightId ? flightMap.get(t.flightId) ?? null : null })
     this.s.staff.push({ id: uid(), eventId: id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
     this.log(id, 'event_created', `Copied from ${src.name}`)
     this.commit()
@@ -539,11 +641,12 @@ export class DemoRepo implements Repo {
     reg.status = 'confirmed'
   }
 
-  async register(code: string, people: RegistrantInput[], teamName: string, note: string): Promise<RegisterResult> {
+  async register(code: string, people: RegistrantInput[], teamName: string, note: string, answers: AnswerInput[] = []): Promise<RegisterResult> {
     const ev = this.s.events.find((e) => e.publicCode === code.trim().toUpperCase())
     if (!ev || (ev.status !== 'published' && ev.status !== 'in_progress')) throw new AppError('This event is not open for registration.', 'not_found')
     const r = ev.registration
     if (!r.open) throw new AppError('Registration for this event is closed.', 'conflict')
+    if (r.opensAt && Date.now() < Date.parse(r.opensAt)) throw new AppError(`Registration opens on ${new Date(r.opensAt).toLocaleString()}.`, 'conflict')
     if (r.closesAt && Date.now() >= Date.parse(r.closesAt)) throw new AppError('Registration for this event has closed.', 'conflict')
     const size = ev.teamSize
     if (people.length !== size) throw new AppError(size === 1 ? 'Register one player at a time.' : `This is a ${size}-person team event. Enter all ${size} players.`, 'invalid')
@@ -561,6 +664,11 @@ export class DemoRepo implements Repo {
     })
     const count = this.s.players.filter((p) => p.eventId === ev.id).length
     const full = r.maxPlayers !== null && count + size > r.maxPlayers
+    if (full && r.waitlistLimit !== null) {
+      const waiting = this.s.registrations.filter((g) => g.eventId === ev.id && g.status === 'waitlisted').reduce((a, g) => a + g.people.length, 0)
+      if (waiting + size > r.waitlistLimit) throw new AppError('The field and the waitlist are full.', 'conflict')
+    }
+    const cleanAnswers = this.checkAnswers(ev.id, size, answers, true)
     const reg: Registration = {
       id: uid(), eventId: ev.id, ref: this.makeRef(ev.id), status: 'waitlisted', teamName: teamName.trim().slice(0, 60), teamId: null,
       registrantNote: note.trim().slice(0, 500), paymentStatus: 'unpaid', paymentMethod: '', amountPaidCents: null, adminNote: '',
@@ -571,11 +679,120 @@ export class DemoRepo implements Repo {
       })),
     }
     this.s.registrations.push(reg)
+    for (const a of cleanAnswers) this.s.answers.push({ registrationId: reg.id, ...a })
     if (!full) this.confirmInternal(reg)
     this.log(ev.id, `registration_${reg.status}`, reg.ref)
     this.commit()
     return { status: reg.status === 'confirmed' ? 'confirmed' : 'waitlisted', ref: reg.ref, teamName: reg.teamId ? this.s.teams.find((t) => t.id === reg.teamId)!.name : null }
   }
+  private checkAnswers(eventId: string, size: number, answers: AnswerInput[], checkRequired: boolean): AnswerInput[] {
+    const out: AnswerInput[] = []
+    for (const q of this.s.questions.filter((x) => x.eventId === eventId).sort((a, b) => a.sortOrder - b.sortOrder)) {
+      const positions = q.perPlayer ? Array.from({ length: size }, (_, i) => i + 1) : [0]
+      for (const pos of positions) {
+        const v = (answers.find((a) => a.questionId === q.id && a.position === pos)?.value ?? '').trim()
+        if (!v) {
+          if (q.required && checkRequired) throw new AppError(`"${q.label}" is required${q.perPlayer ? ` for player ${pos}` : ''}.`, 'invalid')
+          continue
+        }
+        if (q.kind === 'yes_no' && v !== 'Yes' && v !== 'No') throw new AppError(`Answer "${q.label}" with Yes or No.`, 'invalid')
+        if (q.kind === 'choice' && !q.choices.includes(v)) throw new AppError(`Choose one of the options for "${q.label}".`, 'invalid')
+        out.push({ questionId: q.id, position: pos, value: v.slice(0, 200) })
+      }
+    }
+    return out
+  }
+  async createQuestion(eventId: string, q: QuestionInput) {
+    this.requireAdmin(eventId)
+    const id = uid()
+    this.s.questions.push({ id, eventId, ...this.cleanQuestion(q) })
+    this.commit()
+    return id
+  }
+  async updateQuestion(questionId: string, q: QuestionInput) {
+    const cur = this.s.questions.find((x) => x.id === questionId)
+    if (!cur) throw new AppError('Question not found.', 'not_found')
+    this.requireAdmin(cur.eventId)
+    Object.assign(cur, this.cleanQuestion(q))
+    this.commit()
+  }
+  async deleteQuestion(questionId: string) {
+    const cur = this.s.questions.find((x) => x.id === questionId)
+    if (!cur) return
+    this.requireAdmin(cur.eventId)
+    this.s.questions = this.s.questions.filter((x) => x.id !== questionId)
+    this.s.answers = this.s.answers.filter((a) => a.questionId !== questionId)
+    this.commit()
+  }
+  async listAnswers(eventId: string) {
+    if (!this.isAdmin(eventId)) return []
+    const regs = new Set(this.s.registrations.filter((r) => r.eventId === eventId).map((r) => r.id))
+    return clone(this.s.answers.filter((a) => regs.has(a.registrationId)))
+  }
+  async setRegistrationAnswers(regId: string, answers: AnswerInput[]) {
+    const r = this.reg(regId)
+    const clean = this.checkAnswers(r.eventId, Math.max(r.people.length, 1), answers, false)
+    this.s.answers = this.s.answers.filter((a) => a.registrationId !== regId).concat(clean.map((a) => ({ registrationId: regId, ...a })))
+    this.commit()
+  }
+
+  // ── Side games and payouts ──
+  private game(gameId: string) {
+    const g = this.s.sideGames.find((x) => x.id === gameId)
+    if (!g) throw new AppError('Side game not found.', 'not_found')
+    return g
+  }
+  async createSideGame(eventId: string, roundId: string, g: SideGameInput) {
+    this.requireAdmin(eventId)
+    if (!this.s.rounds.some((r) => r.id === roundId && r.eventId === eventId)) throw new AppError('Round not found.', 'not_found')
+    const id = uid()
+    this.s.sideGames.push({ id, eventId, roundId, ...this.cleanGame(g), entryIds: [] })
+    this.commit()
+    return id
+  }
+  async updateSideGame(gameId: string, g: SideGameInput) {
+    const cur = this.game(gameId)
+    this.requireAdmin(cur.eventId)
+    Object.assign(cur, this.cleanGame(g))
+    this.s.sideGameResults = this.s.sideGameResults.filter((r) => r.gameId !== gameId || cur.holes.includes(r.hole))
+    this.commit()
+  }
+  async deleteSideGame(gameId: string) {
+    const cur = this.game(gameId)
+    this.requireAdmin(cur.eventId)
+    this.s.sideGames = this.s.sideGames.filter((x) => x.id !== gameId)
+    this.s.sideGameResults = this.s.sideGameResults.filter((r) => r.gameId !== gameId)
+    this.commit()
+  }
+  async setSideGameEntries(gameId: string, eventId: string, entryIds: string[]) {
+    const cur = this.game(gameId)
+    this.requireAdmin(cur.eventId)
+    cur.entryIds = entryIds.filter((id) => this.s.entries.some((e) => e.id === id && e.eventId === eventId))
+    this.commit()
+  }
+  async setSideGameResult(gameId: string, hole: number, playerId: string | null, note: string) {
+    const g = this.game(gameId)
+    if (this.s.role === 'spectator') throw new AppError('Staff only.', 'forbidden')
+    if (g.kind === 'skins') throw new AppError('Skins are worked out from the scores.', 'conflict')
+    if (!g.holes.includes(hole)) throw new AppError("That hole isn't part of this contest.", 'conflict')
+    if (this.event(g.eventId).status === 'finalized') throw new AppError('Results are final. Reopen a round first.', 'conflict')
+    this.s.sideGameResults = this.s.sideGameResults.filter((r) => !(r.gameId === gameId && r.hole === hole))
+    if (playerId) {
+      const entry = this.s.entries.find((e) => e.eventId === g.eventId && (e.playerId === playerId || this.s.teams.some((t) => t.id === e.teamId && t.playerIds.includes(playerId))))
+      if (!entry) throw new AppError("That player isn't in this event.", 'conflict')
+      this.s.sideGameResults.push({ gameId, hole, playerId, entryId: entry.id, note: note.trim().slice(0, 60) })
+    }
+    this.log(g.eventId, 'side_game_result', `${g.name} hole ${hole}`)
+    this.commit()
+  }
+  async savePayoutTable(eventId: string, t: Omit<PayoutTable, 'id' | 'eventId'>) {
+    this.requireAdmin(eventId)
+    if (t.amountsCents.some((a) => !Number.isInteger(a) || a < 0)) throw new AppError('Amounts must be zero or more.', 'invalid')
+    this.s.payouts = this.s.payouts.filter((x) => !(x.eventId === eventId && x.basis === t.basis && x.roundId === t.roundId && x.flightId === t.flightId))
+    if (t.amountsCents.some((a) => a > 0)) this.s.payouts.push({ id: uid(), eventId, ...t })
+    this.commit()
+  }
+
   async listRegistrations(eventId: string) {
     if (!this.isAdmin(eventId)) return []
     return clone(this.s.registrations.filter((r) => r.eventId === eventId))

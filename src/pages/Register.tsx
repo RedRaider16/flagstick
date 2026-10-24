@@ -11,6 +11,7 @@ import {
   type EventBundle,
   type RegisterResult,
   type RegistrantInput,
+  type RegistrationQuestion,
 } from '../domain/types'
 
 const blank = (): RegistrantInput => ({ firstName: '', lastName: '', email: '', phone: '', handicapIndex: '' })
@@ -22,6 +23,8 @@ export function registrationState(b: EventBundle): { canRegister: boolean; messa
   const spotsLeft = r.maxPlayers === null ? null : Math.max(0, r.maxPlayers - b.players.length)
   if (b.event.status !== 'published' && b.event.status !== 'in_progress') return { canRegister: false, message: 'Registration is not open.', spotsLeft }
   if (!r.open) return { canRegister: false, message: 'Registration is closed.', spotsLeft }
+  if (r.opensAt && Date.now() < Date.parse(r.opensAt))
+    return { canRegister: false, message: `Registration opens ${formatCloses(r.opensAt, b.event.timezone)}.`, spotsLeft }
   if (r.closesAt && Date.now() >= Date.parse(r.closesAt)) return { canRegister: false, message: 'Registration has closed.', spotsLeft }
   return { canRegister: true, message: spotsLeft === 0 ? 'The field is full. New sign-ups join the waitlist.' : '', spotsLeft }
 }
@@ -43,6 +46,7 @@ export function Register() {
   const [people, setPeople] = useState<RegistrantInput[]>([blank()])
   const [teamName, setTeamName] = useState('')
   const [note, setNote] = useState('')
+  const [answers, setAnswers] = useState<Record<string, string>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -113,8 +117,25 @@ export function Register() {
     })
   }
 
+  const akey = (q: RegistrationQuestion, pos: number) => `${q.id}:${pos}`
+  const setAnswer = (q: RegistrationQuestion, pos: number, v: string) => {
+    setAnswers((a) => ({ ...a, [akey(q, pos)]: v }))
+    setErrors((e) => {
+      const k = `q.${akey(q, pos)}`
+      if (!(k in e)) return e
+      const next = { ...e }
+      delete next[k]
+      return next
+    })
+  }
+  const perPlayerQs = bundle.questions.filter((q) => q.perPlayer)
+  const onceQs = bundle.questions.filter((q) => !q.perPlayer)
+
   const validate = (): Record<string, string> => {
     const e: Record<string, string> = {}
+    for (const q of bundle.questions)
+      for (const pos of q.perPlayer ? people.map((_, i) => i + 1) : [0])
+        if (q.required && !(answers[akey(q, pos)] ?? '').trim()) e[`q.${akey(q, pos)}`] = 'Please answer this question.'
     people.forEach((x, i) => {
       if (!x.firstName.trim()) e[`${i}.firstName`] = 'Enter a first name.'
       if (!x.lastName.trim()) e[`${i}.lastName`] = 'Enter a last name.'
@@ -140,7 +161,8 @@ export function Register() {
     setErrors(e)
     setSubmitError(null)
     if (Object.keys(e).length) {
-      document.getElementById(`reg-${Object.keys(e)[0]!.replace('.', '-')}`)?.focus()
+      const first = Object.keys(e)[0]!
+      document.getElementById(first.startsWith('q.') ? `regq-${first.slice(2).replace(':', '-')}` : `reg-${first.replace('.', '-')}`)?.focus()
       return
     }
     setBusy(true)
@@ -149,7 +171,12 @@ export function Register() {
         const h = parseHandicapIndex(x.handicapIndex)
         return { ...x, handicapIndex: h.ok && h.value !== null ? String(h.value) : '' }
       })
-      setResult(await repo.register(event.publicCode, normalized, teamName, note))
+      const answerList = bundle.questions.flatMap((q) =>
+        (q.perPlayer ? people.map((_, i) => i + 1) : [0])
+          .map((pos) => ({ questionId: q.id, position: pos, value: (answers[akey(q, pos)] ?? '').trim() }))
+          .filter((a) => a.value),
+      )
+      setResult(await repo.register(event.publicCode, normalized, teamName, note, answerList))
       window.scrollTo({ top: 0 })
     } catch (err) {
       setSubmitError(errorMessage(err))
@@ -197,6 +224,9 @@ export function Register() {
                 <Field id={`reg-${i}-handicapIndex`} label="Handicap index (optional)" hint="As shown in your GHIN app, e.g. 12.4. Use + for plus handicaps, e.g. +1.2." error={errors[`${i}.handicapIndex`]}>
                   <input id={`reg-${i}-handicapIndex`} type="text" inputMode="decimal" maxLength={5} value={x.handicapIndex} onChange={(e) => set(i, { handicapIndex: e.target.value })} aria-invalid={!!errors[`${i}.handicapIndex`]} style={{ maxWidth: 140 }} />
                 </Field>
+                {perPlayerQs.map((q) => (
+                  <QuestionField key={q.id} q={q} id={`regq-${q.id}-${i + 1}`} value={answers[akey(q, i + 1)] ?? ''} error={errors[`q.${akey(q, i + 1)}`]} onChange={(v) => setAnswer(q, i + 1, v)} />
+                ))}
               </div>
             </fieldset>
           ))}
@@ -206,6 +236,9 @@ export function Register() {
               <input id="reg-team" type="text" maxLength={60} value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="Defaults to your last names" />
             </div>
           )}
+          {onceQs.map((q) => (
+            <QuestionField key={q.id} q={q} id={`regq-${q.id}-0`} value={answers[akey(q, 0)] ?? ''} error={errors[`q.${akey(q, 0)}`]} onChange={(v) => setAnswer(q, 0, v)} />
+          ))}
           <div className="field">
             <label htmlFor="reg-note">Note to the organizer (optional)</label>
             <textarea id="reg-note" maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. tee time request, cart partner" />
@@ -217,7 +250,8 @@ export function Register() {
             </section>
           )}
           <p className="small muted">
-            Your name appears on the public pairings and leaderboard. Email, phone and handicap are visible only to the organizer.
+            Your name appears on the public pairings and leaderboard. Email, phone and your answers are visible only to the organizer.
+            {event.scoringBasis === 'gross' ? ' So is your handicap index.' : ' This event is scored net, so handicap indexes are shown with the results.'}
           </p>
           <button className="btn primary" type="submit" disabled={busy} style={{ minHeight: 'var(--tap)', minWidth: 200 }}>
             {busy ? 'Registering…' : state.spotsLeft === 0 ? 'Join the waitlist' : isTeam ? 'Register team' : 'Register'}
@@ -225,6 +259,37 @@ export function Register() {
         </form>
       )}
     </div>
+  )
+}
+
+function QuestionField({ q, id, value, error, onChange }: { q: RegistrationQuestion; id: string; value: string; error?: string; onChange: (v: string) => void }) {
+  const label = `${q.label}${q.required ? '' : ' (optional)'}`
+  if (q.kind === 'yes_no')
+    return (
+      <fieldset className="field" style={{ border: 0, padding: 0, margin: '0 0 .9rem' }} aria-invalid={!!error}>
+        <legend style={{ fontWeight: 600, fontSize: '.95rem', marginBottom: '.25rem' }}>{label}</legend>
+        <div className="row">
+          {['Yes', 'No'].map((v, k) => (
+            <label key={v} className="choice" style={{ marginRight: '1rem' }}>
+              <input id={k === 0 ? id : undefined} type="radio" name={id} checked={value === v} onChange={() => onChange(v)} />
+              <span>{v}</span>
+            </label>
+          ))}
+        </div>
+        {error && <span className="hint" role="alert" style={{ color: 'var(--danger)', fontWeight: 600 }}>{error}</span>}
+      </fieldset>
+    )
+  return (
+    <Field id={id} label={label} error={error}>
+      {q.kind === 'choice' ? (
+        <select id={id} value={value} onChange={(e) => onChange(e.target.value)} aria-invalid={!!error}>
+          <option value="">Choose…</option>
+          {q.choices.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      ) : (
+        <input id={id} type="text" maxLength={200} value={value} onChange={(e) => onChange(e.target.value)} aria-invalid={!!error} />
+      )}
+    </Field>
   )
 }
 

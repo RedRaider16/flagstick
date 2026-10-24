@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react'
-import { TIEBREAK_LABEL } from '../domain/types'
+import { formatMoney, TIEBREAK_LABEL } from '../domain/types'
 import type { EventLeaderboard, EvRow } from '../scoring/event'
 import { formatToPar } from '../scoring/leaderboard'
 
@@ -21,11 +21,16 @@ export function Leaderboard(props: {
   live?: boolean
   showGaps?: boolean
   detail?: CardDetail
+  /** Place money by entry (cents); shows a Payout column when non-empty. */
+  payouts?: Map<string, number>
+  /** Extra footer line, e.g. the net allowances used. */
+  footnote?: string
 }) {
   const { lb, rounds } = props
   const [open, setOpen] = useState<string | null>(null)
   const multi = rounds.length > 1
-  const cols = 5 + (multi ? rounds.length : 0)
+  const pay = props.payouts && props.payouts.size > 0 ? props.payouts : null
+  const cols = 5 + (multi ? rounds.length : 0) + (pay ? 1 : 0)
   const rows = lb.groups.flatMap((g) => g.rows)
   const anyScores = rows.some((r) => r.holesPlayed > 0 || r.status !== 'active')
   const split = lb.groups.length > 1 || lb.groups.some((g) => g.name)
@@ -51,7 +56,8 @@ export function Leaderboard(props: {
               <th scope="col" className="n">To par</th>
               <th scope="col" className="n">Thru</th>
               {multi && rounds.map((r) => <th key={r.id} scope="col" className="n gross">{r.label.replace('Round ', 'R')}</th>)}
-              <th scope="col" className="n gross">{multi ? 'Total' : 'Gross'}</th>
+              <th scope="col" className="n gross">{multi ? 'Total' : 'Score'}</th>
+              {pay && <th scope="col" className="n">{lb.final ? 'Payout' : 'Projected'}</th>}
             </tr>
           </thead>
           {rows.length === 0 && (
@@ -86,6 +92,7 @@ export function Leaderboard(props: {
                     <td className="who">
                       {r.name}
                       {r.tiebreakNote && <small>{r.tiebreakNote}</small>}
+                      {r.note && <small className="flag-gap">Not ranked: {r.note}</small>}
                       {props.showGaps && r.rounds.some((c) => c.gaps.length > 0) && (
                         <small className="flag-gap">
                           Missing {r.rounds.map((c, i) => (c.gaps.length ? `${multi ? `R${i + 1} ` : ''}hole ${c.gaps.join(', ')}` : '')).filter(Boolean).join('; ')}
@@ -98,6 +105,7 @@ export function Leaderboard(props: {
                     <td className="thru">{r.status === 'active' ? r.thru : ''}</td>
                     {multi && r.rounds.map((c) => <td key={c.roundId} className="gross">{c.complete ? c.gross : c.holesPlayed ? <span className="muted">{c.gross}</span> : '—'}</td>)}
                     <td className="gross">{r.gross ?? '—'}</td>
+                    {pay && <td className="n num">{pay.has(r.entryId) ? formatMoney(pay.get(r.entryId)) : ''}</td>}
                   </tr>
                   {open === r.entryId && (
                     <tr>
@@ -124,6 +132,8 @@ export function Leaderboard(props: {
         </div>
         <div>
           Thru shows holes completed; F = finished; * = started on a hole other than 1. WD, DQ, DNF and NS are unranked.
+          {props.footnote && <> {props.footnote}</>}
+          {pay && !lb.final && ' Projected payouts follow the current standings; ties share the places they cover.'}
           {!anyScores && ' No scores yet.'}
         </div>
       </div>

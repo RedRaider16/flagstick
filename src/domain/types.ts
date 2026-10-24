@@ -1,7 +1,8 @@
 // Domain model shared by the demo store, the Supabase store and the UI.
 // Field names are camelCase here; the database uses snake_case.
 import type { Segment } from '../scoring/formats'
-export type { Segment }
+import type { NetAllowances } from '../scoring/handicap'
+export type { Segment, NetAllowances }
 
 export type EventStatus = 'draft' | 'published' | 'in_progress' | 'finalized'
 export type RoundStatus = 'open' | 'locked' | 'finalized'
@@ -78,7 +79,17 @@ export interface GolfEvent {
   cumulative: boolean
   /** A reusable setup for an annual event. Stays a draft; copy it to run this year's event. */
   isTemplate: boolean
+  /** Which leaderboards to show. Net needs Handicap Indexes and tee ratings. */
+  scoringBasis: ScoringBasis
+  netAllowances: NetAllowances
+  /** Cap on the Handicap Index used for net scoring (e.g. 42.0), or null. */
+  maxHandicapIndex: number | null
+  /** Keep prize money off public screens. */
+  hidePurse: boolean
 }
+
+export type ScoringBasis = 'gross' | 'net' | 'both'
+export const SCORING_BASIS_LABEL: Record<ScoringBasis, string> = { gross: 'Gross only', net: 'Net only', both: 'Gross and net' }
 
 export interface RegistrationSettings {
   open: boolean
@@ -90,9 +101,84 @@ export interface RegistrationSettings {
   entryFeeCents: number | null
   /** Shown to players on the sign-up page, e.g. "Pay at the pro shop". */
   paymentInstructions: string
+  /** ISO timestamp sign-ups start, or null to start as soon as registration is open. */
+  opensAt: string | null
+  /** Players allowed on the waitlist once the field is full; null = no limit. */
+  waitlistLimit: number | null
+  /** Show who has registered on the public event page. */
+  showParticipants: boolean
 }
 
-export const NO_REGISTRATION: RegistrationSettings = { open: false, closesAt: null, maxPlayers: null, entryFeeCents: null, paymentInstructions: '' }
+export const NO_REGISTRATION: RegistrationSettings = {
+  open: false, closesAt: null, maxPlayers: null, entryFeeCents: null, paymentInstructions: '',
+  opensAt: null, waitlistLimit: null, showParticipants: false,
+}
+
+export type QuestionKind = 'text' | 'yes_no' | 'choice'
+export const QUESTION_KIND_LABEL: Record<QuestionKind, string> = { text: 'Short answer', yes_no: 'Yes / No', choice: 'Pick one' }
+
+/** A question the organizer adds to the sign-up form, e.g. "Do you need a cart?" */
+export interface RegistrationQuestion {
+  id: string
+  eventId: string
+  label: string
+  kind: QuestionKind
+  choices: string[]
+  required: boolean
+  /** Ask each player on a team, rather than once per sign-up. */
+  perPlayer: boolean
+  sortOrder: number
+}
+
+export interface RegistrationAnswer {
+  registrationId: string
+  questionId: string
+  /** 0 = once per sign-up; 1–4 = that player. */
+  position: number
+  value: string
+}
+
+export type SideGameKind = 'skins' | 'closest_to_pin' | 'long_drive'
+export const SIDE_GAME_LABEL: Record<SideGameKind, string> = { skins: 'Skins', closest_to_pin: 'Closest to the pin', long_drive: 'Long drive' }
+
+export interface SideGame {
+  id: string
+  eventId: string
+  roundId: string
+  kind: SideGameKind
+  name: string
+  /** Contest holes (closest to the pin, long drive). Skins use all 18. */
+  holes: number[]
+  basis: 'gross' | 'net'
+  carryover: boolean
+  /** Skins: total purse shared by the skins won. */
+  purseCents: number
+  /** Closest to the pin / long drive: paid to each hole's winner. */
+  perHoleCents: number
+  sortOrder: number
+  /** Entries playing (skins). Empty = everyone. */
+  entryIds: string[]
+}
+
+export interface SideGameResult {
+  gameId: string
+  hole: number
+  playerId: string | null
+  entryId: string | null
+  note: string
+}
+
+export interface PayoutTable {
+  id: string
+  eventId: string
+  basis: 'gross' | 'net'
+  /** null = the overall result (or the only round). */
+  roundId: string | null
+  /** null = the whole field. */
+  flightId: string | null
+  /** Place money: amountsCents[0] for 1st, and so on. */
+  amountsCents: number[]
+}
 
 export type RegistrationStatus = 'confirmed' | 'waitlisted' | 'cancelled'
 export type PaymentStatus = 'unpaid' | 'paid' | 'waived' | 'refunded'
@@ -185,6 +271,13 @@ export interface Round {
   useFlights: boolean
   startType: StartType
   status: RoundStatus
+  /** Shotgun time, or the first tee time (HH:MM). */
+  startTime: string | null
+  /** Shotgun: where the first group starts; tee times: the first tee. */
+  startingHole: number
+  /** Players (or teams, in team events of 3–4) per group on the tee sheet. */
+  groupSize: number
+  teeIntervalMinutes: number
 }
 
 export interface Flight {
@@ -301,6 +394,13 @@ export interface EventBundle {
   groups: Group[]
   /** Scores of every round. */
   scores: Score[]
+  questions: RegistrationQuestion[]
+  sideGames: SideGame[]
+  sideGameResults: SideGameResult[]
+  /** Hidden from spectators when the organizer hides the purse. */
+  payouts: PayoutTable[]
+  /** Handicap Indexes: public for net events, otherwise admins only (empty for others). */
+  handicaps: PlayerHandicap[]
 }
 
 export function playerName(p: Pick<Player, 'firstName' | 'lastName'>): string {

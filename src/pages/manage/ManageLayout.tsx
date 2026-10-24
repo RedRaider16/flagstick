@@ -43,6 +43,8 @@ export function ManageLayout() {
     ['flights', 'Flights'],
     ['groups', 'Groups'],
     ['staff', 'Scorekeepers'],
+    ['side-games', 'Side games'],
+    ['payouts', 'Payouts'],
     ['scores', 'Scores'],
     ['history', 'History'],
     ['exports', 'Export & print'],

@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useApp, usePath } from '../app/context'
-import { boardRounds, cardDetail } from '../app/board'
 import { useAccess, useBundle, useTitle } from '../app/hooks'
-import { Leaderboard } from '../components/Leaderboard'
+import { EventBoard } from '../components/EventBoard'
+import { SideGamesPanel } from '../components/SideGamesPanel'
 import { ErrorNote, Loading, ScopeTabs, StatusBadge } from '../components/ui'
-import { buildEventLeaderboard, currentRound, eventDates, eventFormatText, formatTeeTime, isTeamEvent, leaderboardScopes, nameOf, roundGroups, teeOf, type Scope } from '../domain/derive'
-import { formatMoney } from '../domain/types'
+import { currentRound, eventDates, eventFormatText, formatTeeTime, isTeamEvent, nameOf, roundGroups, teeOf } from '../domain/derive'
+import { formatMoney, playerName, SCORING_BASIS_LABEL } from '../domain/types'
 import { formatCloses, registrationState } from './Register'
 
 export function PublicEvent() {
@@ -23,12 +23,8 @@ export function PublicEvent() {
 
   const { bundle, error, connected } = useBundle(eventId ?? undefined)
   const access = useAccess(eventId ?? undefined)
-  const [scope, setScope] = useState<Scope | null>(null)
-  const scopes = useMemo(() => (bundle ? leaderboardScopes(bundle) : []), [bundle])
-  const active: Scope | null = bundle ? (scope && scopes.some((x) => x.scope === scope) ? scope : bundle.event.cumulative && scopes[0]?.scope === 'overall' ? 'overall' : currentRound(bundle).id) : null
-  const lb = useMemo(() => (bundle && active ? buildEventLeaderboard(bundle, active) : null), [bundle, active])
   useTitle(bundle ? `${bundle.event.name} leaderboard` : 'Leaderboard')
-  const [tab, setTab] = useState<'board' | 'pairings'>('board')
+  const [tab, setTab] = useState<'board' | 'pairings' | 'field'>('board')
   const [pairRound, setPairRound] = useState<string | null>(null)
 
   if (missing)
@@ -40,7 +36,7 @@ export function PublicEvent() {
       </>
     )
   if (error) return <ErrorNote error={error} />
-  if (!bundle || !lb || !active) return <Loading />
+  if (!bundle) return <Loading />
 
   const isTeam = isTeamEvent(bundle)
   const pr = bundle.rounds.find((r) => r.id === pairRound) ?? currentRound(bundle)
@@ -55,7 +51,7 @@ export function PublicEvent() {
           <div className="event-meta">
             {eventDates(bundle)} at {bundle.course?.name ?? 'course TBA'}{tees.length ? ` (${tees.join(', ')} tees)` : ''}
           </div>
-          <div className="event-meta">{eventFormatText(bundle)}{bundle.flights.length > 0 && `, ${bundle.flights.length} flights`} <StatusBadge status={bundle.event.status} /></div>
+          <div className="event-meta">{eventFormatText(bundle)}{bundle.flights.length > 0 && `, ${bundle.flights.length} flights`}{bundle.event.scoringBasis !== 'gross' && `, ${SCORING_BASIS_LABEL[bundle.event.scoringBasis].toLowerCase()}`} <StatusBadge status={bundle.event.status} /></div>
         </div>
         <div className="row no-print">
           {access?.role === 'admin' && <Link className="btn" to={p(`manage/${bundle.event.id}`)}>Manage</Link>}
@@ -85,14 +81,33 @@ export function PublicEvent() {
       <div className="tabs no-print" role="tablist">
         <a href="#board" role="tab" aria-selected={tab === 'board'} className={tab === 'board' ? 'active' : ''} onClick={(e) => (e.preventDefault(), setTab('board'))}>Leaderboard</a>
         <a href="#pairings" role="tab" aria-selected={tab === 'pairings'} className={tab === 'pairings' ? 'active' : ''} onClick={(e) => (e.preventDefault(), setTab('pairings'))}>Pairings</a>
+        {bundle.event.registration.showParticipants && (
+          <a href="#field" role="tab" aria-selected={tab === 'field'} className={tab === 'field' ? 'active' : ''} onClick={(e) => (e.preventDefault(), setTab('field'))}>Field ({isTeam ? bundle.teams.length : bundle.players.length})</a>
+        )}
       </div>
 
       {tab === 'board' ? (
         <>
-          <ScopeTabs label="Leaderboard view" options={scopes} value={active} onChange={setScope} />
-          <Leaderboard lb={lb} rounds={boardRounds(bundle, active)} detail={cardDetail(bundle)}
-            title={`${scopes.find((x) => x.scope === active)?.label ?? 'Leaderboard'}${isTeam ? ' — teams' : ''}`} isTeam={isTeam} live={connected && repo.mode === 'live'} />
+          <EventBoard bundle={bundle} live={connected && repo.mode === 'live'} />
+          <SideGamesPanel bundle={bundle} />
         </>
+      ) : tab === 'field' ? (
+        <section className="panel">
+          <h2>Who's playing</h2>
+          {isTeam ? (
+            bundle.teams.length === 0 ? <p className="muted">No teams yet.</p> : (
+              <ol className="field-list">
+                {[...bundle.teams].sort((a, b) => a.name.localeCompare(b.name)).map((t) => (
+                  <li key={t.id}><strong>{t.name}</strong> <span className="muted">{t.playerIds.map((id) => bundle.players.find((p) => p.id === id)).filter(Boolean).map((p) => playerName(p!)).join(', ')}</span></li>
+                ))}
+              </ol>
+            )
+          ) : bundle.players.length === 0 ? <p className="muted">No players yet.</p> : (
+            <ol className="field-list">
+              {[...bundle.players].sort((a, b) => a.lastName.localeCompare(b.lastName)).map((p) => <li key={p.id}>{playerName(p)}</li>)}
+            </ol>
+          )}
+        </section>
       ) : (
         <section className="panel">
           <h2>Pairings{bundle.rounds.length > 1 ? `, round ${pr.roundNumber}` : ''}</h2>

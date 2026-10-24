@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useApp, usePath } from '../../app/context'
 import { useAction } from '../../app/hooks'
-import { Leaderboard } from '../../components/Leaderboard'
-import { boardRounds, cardDetail } from '../../app/board'
-import { ErrorNote, Notice, ScopeTabs, useReasonDialog } from '../../components/ui'
-import { buildEventLeaderboard, currentRound, isTeamEvent, leaderboardScopes, roundGroups, roundHoles, teeOf, teeHoles, type Scope } from '../../domain/derive'
+import { EventBoard } from '../../components/EventBoard'
+import { SideGamesPanel } from '../../components/SideGamesPanel'
+import { ErrorNote, Notice, useReasonDialog } from '../../components/ui'
+import { buildEventLeaderboard, currentRound, isTeamEvent, roundGroups, roundHoles, teeOf, teeHoles } from '../../domain/derive'
 import type { EventStatus, StaffMember } from '../../domain/types'
 import type { EventLeaderboard } from '../../scoring/event'
 import { useManage } from './ManageLayout'
@@ -31,10 +31,6 @@ export function Overview() {
   const multi = bundle.rounds.length > 1
   const isTeam = isTeamEvent(bundle)
   const roundLb = useMemo(() => buildEventLeaderboard(bundle, round.id), [bundle, round.id])
-  const scopes = useMemo(() => leaderboardScopes(bundle), [bundle])
-  const [scope, setScope] = useState<Scope | null>(null)
-  const active: Scope = scope && scopes.some((x) => x.scope === scope) ? scope : scopes[0]?.scope === 'overall' ? 'overall' : round.id
-  const lb = useMemo(() => buildEventLeaderboard(bundle, active), [bundle, active])
   const rLabel = multi ? `round ${round.roundNumber}` : 'the round'
 
   useEffect(() => {
@@ -87,7 +83,8 @@ export function Overview() {
           <>
             <p>This is a template: the saved setup for an annual event. It can't be published or scored.</p>
             <div className="row">
-              <Link className="btn primary" to={p(`manage/${event.id}/setup#copy`)}>Create this year's event</Link>
+              <Link className="btn primary" to={p(`new?from=${event.id}`)}>Create this year's event</Link>
+              <Link className="btn quiet" to={p(`manage/${event.id}/setup#copy`)}>Quick copy</Link>
             </div>
           </>
         )}
@@ -207,9 +204,8 @@ export function Overview() {
 
       {roundHoles(bundle, round).length === 18 && (
         <>
-          <ScopeTabs label="Leaderboard view" options={scopes} value={active} onChange={setScope} />
-          <Leaderboard lb={lb} rounds={boardRounds(bundle, active)} detail={cardDetail(bundle)} showGaps isTeam={isTeam}
-            title={`${scopes.find((x) => x.scope === active)?.label ?? 'Leaderboard'}${isTeam ? ' — teams' : ''}`} />
+          <EventBoard bundle={bundle} showGaps />
+          <SideGamesPanel bundle={bundle} />
         </>
       )}
     </>
