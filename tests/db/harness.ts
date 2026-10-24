@@ -36,14 +36,23 @@ export type Actor = TestUser | 'anon'
 export class TestDb {
   private constructor(readonly pg: PGlite) {}
 
-  static async create(): Promise<TestDb> {
+  /** A database with every migration applied, or only those before `stopBefore` (to rehearse an upgrade). */
+  static async create(stopBefore?: string): Promise<TestDb> {
     const pg = new PGlite()
     await pg.exec(SUPABASE_SHIM)
+    const db = new TestDb(pg)
+    await db.migrate(undefined, stopBefore)
+    return db
+  }
+
+  /** Apply migration files in order from `from` (inclusive) up to `stopBefore` (exclusive). */
+  async migrate(from?: string, stopBefore?: string): Promise<void> {
     const dir = join(process.cwd(), 'supabase', 'migrations')
     for (const f of readdirSync(dir).filter((x) => x.endsWith('.sql')).sort()) {
-      await pg.exec(readFileSync(join(dir, f), 'utf8'))
+      if (from && f < from) continue
+      if (stopBefore && f >= stopBefore) break
+      await this.pg.exec(readFileSync(join(dir, f), 'utf8'))
     }
-    return new TestDb(pg)
   }
 
   async user(email: string): Promise<TestUser> {
