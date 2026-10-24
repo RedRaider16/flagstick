@@ -23,6 +23,13 @@ import { formatAmounts, parseAmounts } from './manage/Payouts'
 export { TIMEZONES }
 
 const DRAFT_KEY = 'flagstick-new-event-draft'
+
+/** The next edition's first day: same weekday a year on, repeated until it's upcoming. */
+function nextEditionDate(date: string, today: string): string {
+  let d = nextYearSameWeekday(date)
+  while (d < today) d = nextYearSameWeekday(d)
+  return d
+}
 type Draft = { step: StepKey; setup: EventSetup; source: string | null }
 
 function loadDraft(): Draft | null {
@@ -308,14 +315,14 @@ function StartStep({ onPick, blank }: { onPick: (s: EventSetup, source: string |
       const pre = params.get('from') ? es.find((e) => e.id === params.get('from')) : undefined
       if (pre) {
         setSource(pre)
-        setDate(pre.isTemplate ? pre.date : nextYearSameWeekday(pre.date))
+        setDate(nextEditionDate(pre.date, new Date().toISOString().slice(0, 10)))
       }
     }, () => setEvents([]))
   }, [repo, params])
   if (!events) return <Loading />
   const templates = events.filter((e) => e.isTemplate)
   const past = events.filter((e) => !e.isTemplate)
-  const pick = (e: GolfEvent) => { setSource(e); setDate(e.isTemplate ? e.date : nextYearSameWeekday(e.date)) }
+  const pick = (e: GolfEvent) => { setSource(e); setDate(nextEditionDate(e.date, new Date().toISOString().slice(0, 10))) }
 
   return (
     <>

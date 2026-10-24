@@ -224,7 +224,9 @@ function CopyEvent() {
   const nav = useNavigate()
   const { event } = bundle
   const { busy, error, run } = useAction()
-  const nextDate = event.isTemplate ? event.date : nextYearSameWeekday(event.date)
+  const today = new Date().toISOString().slice(0, 10)
+  let nextDate = nextYearSameWeekday(event.date)
+  while (nextDate < today) nextDate = nextYearSameWeekday(nextDate)
   const year = (d: string) => d.slice(0, 4)
   const suggestName = (d: string) => {
     const base = event.name.replace(/\(template\)/gi, '').replace(/\btemplate\b/gi, '').replace(/\b(19|20)\d{2}\b/g, '').replace(/\s{2,}/g, ' ').trim()
