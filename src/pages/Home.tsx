@@ -76,7 +76,7 @@ export function Home() {
                 <li key={ev.id}>
                   <div>
                     <div style={{ fontWeight: 700 }}>{ev.name}</div>
-                    <div className="muted small">{formatDate(ev.date)} <StatusBadge status={ev.status} /></div>
+                    <div className="muted small">{formatDate(ev.date)} {ev.isTemplate ? <span className="badge provisional">Template</span> : <StatusBadge status={ev.status} />}</div>
                   </div>
                   <div className="row">
                     <Link className="btn" to={p(`manage/${ev.id}`)}>Open</Link>

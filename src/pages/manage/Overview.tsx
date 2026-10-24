@@ -3,10 +3,11 @@ import { Link, useNavigate } from 'react-router'
 import { useApp, usePath } from '../../app/context'
 import { useAction } from '../../app/hooks'
 import { Leaderboard } from '../../components/Leaderboard'
-import { ErrorNote, Notice, useReasonDialog } from '../../components/ui'
-import { buildLeaderboard } from '../../domain/derive'
+import { boardRounds, cardDetail } from '../../app/board'
+import { ErrorNote, Notice, ScopeTabs, useReasonDialog } from '../../components/ui'
+import { buildEventLeaderboard, currentRound, isTeamEvent, leaderboardScopes, roundGroups, roundHoles, teeOf, teeHoles, type Scope } from '../../domain/derive'
 import type { EventStatus, StaffMember } from '../../domain/types'
-import { finalizationBlockers } from '../../scoring/leaderboard'
+import type { EventLeaderboard } from '../../scoring/event'
 import { useManage } from './ManageLayout'
 
 const STEPS: { key: EventStatus; label: string }[] = [
@@ -25,9 +26,16 @@ export function Overview() {
   const nav = useNavigate()
   const [blockers, setBlockers] = useState<string[]>([])
   const [staff, setStaff] = useState<StaffMember[]>([])
-  const lb = useMemo(() => buildLeaderboard(bundle), [bundle])
-  const { event, round } = bundle
-  const isTeam = round.format === 'scramble_2'
+  const { event } = bundle
+  const round = currentRound(bundle)
+  const multi = bundle.rounds.length > 1
+  const isTeam = isTeamEvent(bundle)
+  const roundLb = useMemo(() => buildEventLeaderboard(bundle, round.id), [bundle, round.id])
+  const scopes = useMemo(() => leaderboardScopes(bundle), [bundle])
+  const [scope, setScope] = useState<Scope | null>(null)
+  const active: Scope = scope && scopes.some((x) => x.scope === scope) ? scope : scopes[0]?.scope === 'overall' ? 'overall' : round.id
+  const lb = useMemo(() => buildEventLeaderboard(bundle, active), [bundle, active])
+  const rLabel = multi ? `round ${round.roundNumber}` : 'the round'
 
   useEffect(() => {
     repo.startBlockers(event.id).then(setBlockers, () => setBlockers([]))
@@ -35,20 +43,29 @@ export function Overview() {
   }, [repo, event.id, bundle])
 
   const idx = STEPS.findIndex((s) => s.key === event.status)
-  const unassigned = bundle.entries.filter((e) => !bundle.groups.some((g) => g.entryIds.includes(e.id))).length
+  const roundGs = roundGroups(bundle, round.id)
+  const unassigned = bundle.entries.filter((e) => e.status === 'active' && !roundGs.some((g) => g.entryIds.includes(e.id))).length
   const scorekeepers = staff.filter((s) => s.role === 'scorekeeper')
-  const finalBlockers = finalizationBlockers(lb)
+  const finalBlockers = roundBlockers(roundLb)
   const act = (fn: () => Promise<void>) => run(async () => { await fn(); await reload() })
 
   const spectatorUrl = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}${p(`e/${event.publicCode}`)}`
 
   const checklist: [boolean, string, string][] = [
-    [!!bundle.tee && bundle.holes.length === 18, bundle.tee ? `${bundle.tee.name} tees, ${bundle.holes.length} of 18 holes set up` : 'Choose a tee', 'setup'],
+    ...bundle.rounds.map((r): [boolean, string, string] => {
+      const tee = teeOf(bundle, r.teeId)
+      const n = teeHoles(bundle, r.teeId).length
+      const pre = multi ? `Round ${r.roundNumber}: ` : ''
+      return [!!tee && n === 18, tee ? `${pre}${tee.name} tees${n === 18 ? '' : `, ${n} of 18 holes set up`}` : `${pre}choose a tee`, 'setup']
+    }),
     [bundle.players.length > 0, `${bundle.players.length} player${bundle.players.length === 1 ? '' : 's'}`, 'players'],
     ...(isTeam
-      ? ([[bundle.teams.length > 0 && bundle.teams.every((t) => t.playerIds.length === 2), `${bundle.teams.length} team${bundle.teams.length === 1 ? '' : 's'}${bundle.teams.some((t) => t.playerIds.length !== 2) ? ', some without two players' : ''}`, 'teams']] as [boolean, string, string][])
+      ? ([[bundle.teams.length > 0 && bundle.teams.every((t) => t.playerIds.length === event.teamSize), `${bundle.teams.length} team${bundle.teams.length === 1 ? '' : 's'}${bundle.teams.some((t) => t.playerIds.length !== event.teamSize) ? `, some without ${event.teamSize} players` : ''}`, 'teams']] as [boolean, string, string][])
       : []),
-    [bundle.groups.length > 0 && unassigned === 0, bundle.groups.length ? `${bundle.groups.length} groups${unassigned ? `, ${unassigned} ${isTeam ? 'team' : 'player'}${unassigned === 1 ? '' : 's'} not in a group` : ''}` : 'No groups yet', 'groups'],
+    ...(bundle.flights.length > 0
+      ? ([[bundle.entries.every((e) => e.status !== 'active' || e.flightId), `${bundle.flights.length} flights${bundle.entries.some((e) => e.status === 'active' && !e.flightId) ? `, some ${isTeam ? 'teams' : 'players'} not in a flight` : ''}`, 'flights']] as [boolean, string, string][])
+      : []),
+    [roundGs.length > 0 && unassigned === 0, roundGs.length ? `${multi ? `Round ${round.roundNumber}: ` : ''}${roundGs.length} groups${unassigned ? `, ${unassigned} ${isTeam ? 'team' : 'player'}${unassigned === 1 ? '' : 's'} not in a group` : ''}` : 'No groups yet', 'groups'],
     [scorekeepers.length > 0, scorekeepers.length ? `${scorekeepers.length} scorekeeper${scorekeepers.length === 1 ? '' : 's'}` : 'No scorekeepers (admins can still enter every score)', 'staff'],
   ]
 
@@ -66,7 +83,16 @@ export function Overview() {
           ))}
         </ol>
 
-        {event.status === 'draft' && (
+        {event.isTemplate && (
+          <>
+            <p>This is a template: the saved setup for an annual event. It can't be published or scored.</p>
+            <div className="row">
+              <Link className="btn primary" to={p(`manage/${event.id}/setup#copy`)}>Create this year's event</Link>
+            </div>
+          </>
+        )}
+
+        {event.status === 'draft' && !event.isTemplate && (
           <>
             <p>Only staff can see this event. Publishing shows the pairings and leaderboard to anyone with the code.</p>
             <div className="row">
@@ -95,8 +121,9 @@ export function Overview() {
         {event.status === 'in_progress' && (
           <>
             <p>
+              {multi && <><strong>Round {round.roundNumber} of {bundle.rounds.length}</strong> ({bundle.rounds.filter((r) => r.status === 'finalized').length} final). </>}
               {round.status === 'locked'
-                ? 'The round is locked. Scorekeepers can no longer change scores; admins can correct with a reason.'
+                ? `${multi ? 'Round ' + round.roundNumber : 'The round'} is locked. Scorekeepers can no longer change scores; admins can correct with a reason.`
                 : 'Scorekeepers can enter scores for their groups.'}
             </p>
             {finalBlockers.length > 0 && (
@@ -108,23 +135,23 @@ export function Overview() {
             <div className="row" style={{ marginTop: '.75rem' }}>
               {round.status === 'open' ? (
                 <button className="btn" disabled={busy} onClick={async () => {
-                  const r = await dialog.ask({ title: 'Lock the round?', body: <p>Scorekeepers will no longer be able to change scores. You can unlock it later.</p>, label: 'Note', confirmLabel: 'Lock round' })
+                  const r = await dialog.ask({ title: `Lock ${rLabel}?`, body: <p>Scorekeepers will no longer be able to change scores. You can unlock it later.</p>, label: 'Note', confirmLabel: 'Lock' })
                   if (r !== null) await act(() => repo.setRoundLock(round.id, true, r))
-                }}>Lock round</button>
+                }}>Lock {rLabel}</button>
               ) : (
                 <button className="btn" disabled={busy} onClick={async () => {
-                  const r = await dialog.ask({ title: 'Unlock the round?', body: <p>Scorekeepers will be able to change scores again.</p>, label: 'Reason', confirmLabel: 'Unlock round' })
+                  const r = await dialog.ask({ title: `Unlock ${rLabel}?`, body: <p>Scorekeepers will be able to change scores again.</p>, label: 'Reason', confirmLabel: 'Unlock' })
                   if (r !== null) await act(() => repo.setRoundLock(round.id, false, r))
-                }}>Unlock round</button>
+                }}>Unlock {rLabel}</button>
               )}
               <button className="btn primary" disabled={busy || finalBlockers.length > 0} onClick={async () => {
                 const r = await dialog.ask({
-                  title: 'Finalize results?',
-                  body: <p>Results will be marked Final and nobody can change scores. You can reopen later; reopening is recorded.</p>,
-                  label: 'Note', confirmLabel: 'Finalize results',
+                  title: multi ? `Finalize round ${round.roundNumber}?` : 'Finalize results?',
+                  body: <p>{multi ? `Round ${round.roundNumber}'s scores become final and can't be changed. ${bundle.rounds.filter((r) => r.status !== 'finalized').length > 1 ? 'Scoring then moves to the next round.' : 'This is the last round, so the event becomes Final.'}` : 'Results will be marked Final and nobody can change scores.'} You can reopen later; reopening is recorded.</p>,
+                  label: 'Note', confirmLabel: 'Finalize',
                 })
                 if (r !== null) await act(() => repo.finalizeRound(round.id, r))
-              }}>Finalize results</button>
+              }}>{multi ? `Finalize round ${round.roundNumber}` : 'Finalize results'}</button>
               <button className="btn quiet" disabled={busy} onClick={async () => {
                 const r = await dialog.ask({ title: 'Pause scoring?', body: <p>Moves the event back to Published. Scorekeepers can't enter scores until you start again.</p>, label: 'Reason', required: true, confirmLabel: 'Pause scoring' })
                 if (r !== null) await act(() => repo.setEventStatus(event.id, 'published', r))
@@ -136,14 +163,18 @@ export function Overview() {
         {event.status === 'finalized' && (
           <>
             <p>Results are final. Scores can't be changed by anyone.</p>
-            <button className="btn" disabled={busy} onClick={async () => {
+            <div className="row">
+            {[...bundle.rounds].reverse().map((rd) => (
+            <button key={rd.id} className="btn" disabled={busy} onClick={async () => {
               const r = await dialog.ask({
                 title: 'Reopen final results?',
                 body: <p>The round reopens locked, so only admins can make corrections. Your name, the time and the reason are recorded.</p>,
                 label: 'Reason', required: true, confirmLabel: 'Reopen', danger: true,
               })
-              if (r !== null) await act(() => repo.reopenRound(round.id, r))
-            }}>Reopen results</button>
+              if (r !== null) await act(() => repo.reopenRound(rd.id, r))
+            }}>{multi ? `Reopen round ${rd.roundNumber}` : 'Reopen results'}</button>
+            ))}
+            </div>
           </>
         )}
       </section>
@@ -174,9 +205,20 @@ export function Overview() {
         </section>
       </div>
 
-      {bundle.holes.length === 18 && (
-        <Leaderboard lb={lb} holes={bundle.holes} title={isTeam ? 'Team leaderboard' : 'Leaderboard'} isTeam={isTeam} showGaps />
+      {roundHoles(bundle, round).length === 18 && (
+        <>
+          <ScopeTabs label="Leaderboard view" options={scopes} value={active} onChange={setScope} />
+          <Leaderboard lb={lb} rounds={boardRounds(bundle, active)} detail={cardDetail(bundle)} showGaps isTeam={isTeam}
+            title={`${scopes.find((x) => x.scope === active)?.label ?? 'Leaderboard'}${isTeam ? ' — teams' : ''}`} />
+        </>
       )}
     </>
   )
+}
+
+/** Active entries without a full card in this round (finalizing needs none). */
+function roundBlockers(lb: EventLeaderboard): string[] {
+  return lb.groups.flatMap((g) => g.rows)
+    .filter((r) => r.status === 'active' && !r.complete)
+    .map((r) => `${r.name}: ${r.holesPlayed === 0 ? 'no scores' : `${18 - r.holesPlayed} hole(s) missing`}. Finish the card or mark WD, DNF or NS.`)
 }

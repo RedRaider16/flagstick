@@ -12,7 +12,9 @@ export function Staff() {
   const [staff, setStaff] = useState<StaffMember[] | null>(null)
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<StaffRole>('scorekeeper')
-  const groups = [...bundle.groups].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+  const roundNo = (roundId: string) => bundle.rounds.find((r) => r.id === roundId)?.roundNumber ?? 1
+  const groups = [...bundle.groups].sort((a, b) => roundNo(a.roundId) - roundNo(b.roundId) || a.name.localeCompare(b.name, undefined, { numeric: true }))
+  const multi = bundle.rounds.length > 1
 
   const load = useCallback(() => repo.listStaff(bundle.event.id).then(setStaff), [repo, bundle.event.id])
   useEffect(() => void load(), [load])
@@ -81,7 +83,7 @@ export function Staff() {
                           {groups.map((g) => (
                             <label key={g.id} className="choice" style={{ padding: 0 }}>
                               <input type="checkbox" checked={s.groupIds.includes(g.id)} disabled={busy} onChange={() => void toggle(s, g.id)} />
-                              <span>{g.name}</span>
+                              <span>{multi ? `R${roundNo(g.roundId)} ` : ''}{g.name}</span>
                             </label>
                           ))}
                         </div>

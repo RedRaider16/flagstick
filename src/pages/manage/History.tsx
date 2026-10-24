@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useApp } from '../../app/context'
 import { ErrorNote, Loading } from '../../components/ui'
 import { errorMessage } from '../../data/errors'
-import { formatStamp, nameOf } from '../../domain/derive'
+import { formatStamp, isTeamEvent, nameOf } from '../../domain/derive'
 import type { EventLogEntry, ScoreAudit } from '../../domain/types'
 import { useManage } from './ManageLayout'
 
@@ -79,7 +79,7 @@ export function History() {
         {!audit ? <Loading /> : shown.length === 0 ? <p className="muted">No score changes yet.</p> : (
           <div className="table-wrap">
             <table>
-              <thead><tr><th scope="col">When</th><th scope="col">{bundle.round.format === 'scramble_2' ? 'Team' : 'Player'}</th><th scope="col" className="n">Hole</th><th scope="col">Change</th><th scope="col">Reason</th><th scope="col">Who</th></tr></thead>
+              <thead><tr><th scope="col">When</th><th scope="col">{isTeamEvent(bundle) ? 'Team' : 'Player'}</th><th scope="col" className="n">Hole</th><th scope="col">Change</th><th scope="col">Reason</th><th scope="col">Who</th></tr></thead>
               <tbody>
                 {shown.map((a) => (
                   <tr key={a.id}>

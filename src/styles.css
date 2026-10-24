@@ -265,6 +265,7 @@ dialog::backdrop { background: rgba(13,54,38,.45); }
 .scorecard th, .scorecard td { border: 1px solid #555; text-align: center; padding: .2rem; }
 .scorecard td.nm, .scorecard th.nm { text-align: left; width: 11rem; }
 .scorecard td.blank { height: 1.8rem; }
+.scorecard td.shade { height: 1.8rem; background: repeating-linear-gradient(135deg, #eee 0 4px, #fff 4px 8px); }
 
 @media (max-width: 640px) {
   body { font-size: 16px; }
@@ -289,3 +290,31 @@ dialog::backdrop { background: rgba(13,54,38,.45); }
 .reg-callout h2 { font-size: 1.25rem; margin-bottom: .3rem; }
 
 .choice .hint { display: block; font-weight: 400; color: var(--ink-soft); font-size: .88rem; margin-top: .15rem; }
+
+/* Flights, multi-round boards, best-ball cards */
+.board tr.flight-row th { background: var(--fairway); color: #fff; text-align: left; font-family: var(--font-cond); font-size: 1.1rem; letter-spacing: .02em; padding: .4rem .6rem; }
+.card-strip.with-names { grid-template-columns: minmax(5.5rem, 8rem) repeat(9, minmax(2.1rem, 1fr)) 3rem; }
+.card-strip .nm { text-align: left; padding-left: .4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-strip .sc-player { color: var(--ink-soft); }
+.round-tabs { display: flex; gap: .4rem; flex-wrap: wrap; margin: 0 0 .75rem; }
+.round-tabs button { min-height: var(--tap); }
+.round-tabs button[aria-pressed='true'] { background: var(--fairway); color: #fff; border-color: var(--fairway); }
+.players-pad { display: grid; gap: .5rem; }
+.player-line { display: grid; grid-template-columns: minmax(6rem, 1fr) auto; align-items: center; gap: .5rem; border-top: 1px solid var(--rule-soft); padding-top: .5rem; }
+.player-line .pad { grid-column: 1 / -1; }
+.counting { font-family: var(--font-cond); font-size: 1rem; color: var(--ink-soft); }
+.seg-row { display: grid; grid-template-columns: 4.5rem 4.5rem 1fr 5.5rem auto; gap: .4rem; align-items: end; margin-bottom: .4rem; }
+@media (max-width: 560px) { .seg-row { grid-template-columns: 1fr 1fr; } }
+tr.sub-row th.name { font-weight: 400; padding-left: 1.2rem; }
+tr.sub-row td.ro { color: var(--ink-soft); text-align: center; }
+
+/* Setup: one card per round */
+.spacer { flex: 1; }
+.grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 1rem; border: 0; padding: 0; margin: 0; }
+.round-card { border: 1px solid var(--rule); border-radius: var(--radius-m); padding: .8rem 1rem; margin: .8rem 0; }
+.round-card + .round-card { margin-top: 1rem; }
+.pad-value { font-size: 1.6rem; font-weight: 700; min-width: 2ch; text-align: right; }
+.pad-value.under { color: var(--under); }
+.pad-line + .pad-line { border-top: 1px dashed var(--rule-soft); margin-top: .5rem; padding-top: .2rem; }
+.flight-list { list-style: none; padding: 0; margin: 0 0 .8rem; }
+.flight-list li { padding: .3rem 0; border-bottom: 1px solid var(--rule-soft); }

@@ -17,6 +17,7 @@ import { Setup } from './pages/manage/Setup'
 import { Players } from './pages/manage/Players'
 import { Teams } from './pages/manage/Teams'
 import { Groups } from './pages/manage/Groups'
+import { Flights } from './pages/manage/Flights'
 import { Staff } from './pages/manage/Staff'
 import { AdminScores } from './pages/manage/AdminScores'
 import { History } from './pages/manage/History'
@@ -45,6 +46,7 @@ const pages: RouteObject[] = [
       { path: 'registration', element: <Registrations /> },
       { path: 'players', element: <Players /> },
       { path: 'teams', element: <Teams /> },
+      { path: 'flights', element: <Flights /> },
       { path: 'groups', element: <Groups /> },
       { path: 'staff', element: <Staff /> },
       { path: 'scores', element: <AdminScores /> },

@@ -7,7 +7,6 @@ import type {
   EventBundle,
   EventLogEntry,
   EventStatus,
-  Format,
   GolfEvent,
   Group,
   Hole,
@@ -20,8 +19,10 @@ import type {
   Registration,
   RegistrationSettings,
   PlayerContact,
+  Round,
   Score,
   ScoreAudit,
+  Segment,
   StaffMember,
   StaffRole,
   StartType,
@@ -57,10 +58,22 @@ export interface NewEventInput {
   date: string
   timezone: string
   description: string
-  format: Format
+  teamSize: number
+  segments: Segment[]
   startType: StartType
   tiebreak: TiebreakPolicy
 }
+
+/** One score cell: a team/individual score (playerId null) or a player's best-ball score. */
+export interface ScoreSlot {
+  roundId: string
+  entryId: string
+  playerId: string | null
+  hole: number
+}
+
+export type EventPatch = Partial<Pick<GolfEvent, 'name' | 'date' | 'timezone' | 'description' | 'tiebreakPolicy' | 'teamSize' | 'cumulative' | 'isTemplate'>>
+export type RoundPatch = Partial<Pick<Round, 'date' | 'teeId' | 'segments' | 'useFlights' | 'startType'>>
 
 export interface PlayerInput {
   firstName: string
@@ -101,15 +114,26 @@ export interface Repo {
   // ── Events ──
   createEvent(input: NewEventInput): Promise<string>
   loadBundle(eventId: string): Promise<EventBundle>
-  updateEvent(eventId: string, patch: Partial<Pick<GolfEvent, 'name' | 'date' | 'timezone' | 'description' | 'tiebreakPolicy'>>): Promise<void>
+  updateEvent(eventId: string, patch: EventPatch): Promise<void>
   updateRegistrationSettings(eventId: string, s: RegistrationSettings): Promise<void>
-  updateRound(roundId: string, patch: { teeId?: string | null; format?: Format; startType?: StartType }): Promise<void>
+  updateRound(roundId: string, patch: RoundPatch): Promise<void>
+  addRound(eventId: string): Promise<string>
+  deleteRound(roundId: string): Promise<void>
   deleteEvent(eventId: string): Promise<void>
+  /** Copy the setup (rounds, formats, flights, fees; no players) into a new draft. */
+  duplicateEvent(eventId: string, name: string, date: string, asTemplate: boolean): Promise<string>
+
+  // ── Flights ──
+  createFlight(eventId: string, name: string, sortOrder: number): Promise<string>
+  updateFlight(flightId: string, name: string, sortOrder: number): Promise<void>
+  deleteFlight(flightId: string): Promise<void>
+  setEntryFlights(eventId: string, assignments: { entryId: string; flightId: string | null }[]): Promise<void>
 
   // ── Roster ──
   addPlayer(eventId: string, p: PlayerInput): Promise<string>
   updatePlayer(playerId: string, eventId: string, p: PlayerInput): Promise<void>
   removePlayer(playerId: string): Promise<void>
+  setPlayerTee(playerId: string, teeId: string | null): Promise<void>
   listContacts(eventId: string): Promise<PlayerContact[]>
   createTeam(eventId: string, name: string, playerIds: string[]): Promise<string>
   updateTeam(teamId: string, eventId: string, name: string, playerIds: string[]): Promise<void>
@@ -147,14 +171,15 @@ export interface Repo {
 
   // ── Scores ──
   /** expectedVersion: version last seen, or null if the hole looked empty. Throws AppError('conflict'). */
-  setScore(roundId: string, entryId: string, hole: number, strokes: number, expectedVersion: number | null, reason: string): Promise<Score>
-  clearScore(roundId: string, entryId: string, hole: number, expectedVersion: number, reason: string): Promise<void>
-  listScores(roundId: string): Promise<Score[]>
+  setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string): Promise<Score>
+  clearScore(slot: ScoreSlot, expectedVersion: number, reason: string): Promise<void>
+  /** Every round's scores. */
+  listScores(eventId: string): Promise<Score[]>
   listAudit(eventId: string): Promise<ScoreAudit[]>
   listEventLog(eventId: string): Promise<EventLogEntry[]>
 
   /** Change notifications for one event. `scoresOnly` lets the caller refetch cheaply. */
-  subscribe(eventId: string, roundId: string, onChange: (what: 'scores' | 'all') => void): () => void
+  subscribe(eventId: string, onChange: (what: 'scores' | 'all') => void): () => void
 }
 
-export type { Player, Group }
+export type { Player, Group, Round }

@@ -7,6 +7,7 @@ import { ErrorNote, Notice, useReasonDialog } from '../../components/ui'
 import type { PlayerInput } from '../../data/repo'
 import { formatHandicapIndex, parseHandicapIndex, playerName, type PlayerContact, type PlayerHandicap } from '../../domain/types'
 import { parsePlayerCsv, PLAYER_CSV_HEADER, type PlayerImportRow } from '../../scoring/csv'
+import { isTeamEvent, teeOf } from '../../domain/derive'
 import { useManage } from './ManageLayout'
 
 const empty: PlayerInput = { firstName: '', lastName: '', email: '', phone: '' }
@@ -21,7 +22,10 @@ export function Players() {
   const [form, setForm] = useState<PlayerInput>(empty)
   const [editing, setEditing] = useState<string | null>(null)
   const [edit, setEdit] = useState<PlayerInput>(empty)
-  const isTeam = bundle.round.format === 'scramble_2'
+  const isTeam = isTeamEvent(bundle)
+  // Individual events: players may play a different tee than the round's (seniors, ladies).
+  const roundTees = new Set(bundle.rounds.map((r) => r.teeId))
+  const showTee = !isTeam && bundle.tees.length > 1
   const final = bundle.event.status === 'finalized'
 
   const loadContacts = useCallback(() => repo.listContacts(bundle.event.id).then(setContacts, () => setContacts([])), [repo, bundle.event.id])
@@ -108,7 +112,7 @@ export function Players() {
             importLabel="Import players"
             onImport={importRows}
           />
-          {isTeam && <p className="small muted">The team column creates two-person teams. Leave it blank to pair players later.</p>}
+          {isTeam && <p className="small muted">The team column groups players into teams of {bundle.event.teamSize}. Leave it blank to pair players later.</p>}
         </section>
       </div>
 
@@ -124,6 +128,7 @@ export function Players() {
                   <th scope="col">Email</th>
                   <th scope="col">Phone</th>
                   <th scope="col" className="n">HI</th>
+                  {showTee && <th scope="col">Tee</th>}
                   {isTeam ? <th scope="col">Team</th> : <th scope="col">Status</th>}
                   <th scope="col"><span className="sr-only">Actions</span></th>
                 </tr>
@@ -135,7 +140,7 @@ export function Players() {
                   if (editing === pl.id)
                     return (
                       <tr key={pl.id}>
-                        <td colSpan={6}>
+                        <td colSpan={showTee ? 7 : 6}>
                           <form className="row" onSubmit={(e) => {
                             e.preventDefault()
                             void run(async () => {
@@ -166,6 +171,15 @@ export function Players() {
                           {formatHandicapIndex(hcpOf(pl.id)?.handicapIndex) || '+ Add'}
                         </button>
                       </td>
+                      {showTee && (
+                        <td>
+                          <select aria-label={`Tee for ${playerName(pl)}`} value={pl.teeId ?? ''} disabled={final || busy} style={{ width: 'auto', minHeight: 36 }}
+                            onChange={(e) => void run(async () => { await repo.setPlayerTee(pl.id, e.target.value || null); await reload() })}>
+                            <option value="">Round tee{roundTees.size === 1 && teeOf(bundle, [...roundTees][0]) ? ` (${teeOf(bundle, [...roundTees][0])!.name})` : ''}</option>
+                            {bundle.tees.filter((t) => !roundTees.has(t.id)).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
+                        </td>
+                      )}
                       {isTeam ? (
                         <td>{teamOf(pl.id)?.name ?? <span className="muted">No team</span>}</td>
                       ) : (

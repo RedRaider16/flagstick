@@ -9,7 +9,7 @@ import type {
   EventBundle,
   EventLogEntry,
   EventStatus,
-  Format,
+  Flight,
   GolfEvent,
   Group,
   Hole,
@@ -27,13 +27,12 @@ import type {
   ScoreAudit,
   StaffMember,
   StaffRole,
-  StartType,
   Team,
   Tee,
 } from '../domain/types'
 import type { HoleInput } from '../scoring/validation'
 import { AppError, type ErrorKind } from './errors'
-import type { Access, CourseDetail, GroupInput, NewEventInput, PlayerInput, Repo, SessionUser } from './repo'
+import type { Access, CourseDetail, EventPatch, GroupInput, NewEventInput, PlayerInput, Repo, RoundPatch, ScoreSlot, SessionUser } from './repo'
 
 type Row = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -54,20 +53,27 @@ const mapEvent = (r: Row): GolfEvent => ({
     entryFeeCents: r.entry_fee_cents ?? null,
     paymentInstructions: r.payment_instructions ?? '',
   },
+  teamSize: r.team_size ?? 1,
+  cumulative: r.cumulative ?? true,
+  isTemplate: Boolean(r.is_template),
 })
 const mapRound = (r: Row): Round => ({
-  id: r.id, eventId: r.event_id, roundNumber: r.round_number, date: r.round_date, teeId: r.tee_id, format: r.format,
-  startType: r.start_type, status: r.status,
+  id: r.id, eventId: r.event_id, roundNumber: r.round_number, date: r.round_date, teeId: r.tee_id,
+  segments: (r.segments as Row[]).map((x) => ({ from: Number(x.from), to: Number(x.to), method: x.method, count: Number(x.count ?? 1) })),
+  useFlights: r.use_flights ?? true, startType: r.start_type, status: r.status,
 })
 const mapScore = (r: Row): Score => ({
-  id: r.id, roundId: r.round_id, entryId: r.entry_id, hole: r.hole, strokes: r.strokes, version: r.version,
+  id: r.id, roundId: r.round_id, entryId: r.entry_id, playerId: r.player_id ?? null, hole: r.hole, strokes: r.strokes, version: r.version,
   updatedAt: r.updated_at, updatedBy: r.updated_by,
 })
+const mapFlight = (r: Row): Flight => ({ id: r.id, eventId: r.event_id, name: r.name, sortOrder: r.sort_order })
+const slotArgs = (s: ScoreSlot) => ({ p_round: s.roundId, p_entry: s.entryId, p_hole: s.hole, p_player: s.playerId })
 const mapTee = (r: Row): Tee => ({ id: r.id, courseId: r.course_id, name: r.name, rating: r.rating === null ? null : Number(r.rating), slope: r.slope })
 const mapHole = (r: Row): Hole => ({ teeId: r.tee_id, number: r.number, par: r.par, yardage: r.yardage, strokeIndex: r.stroke_index })
 const mapCourse = (r: Row): Course => ({ id: r.id, name: r.name, city: r.city })
 const mapEntry = (r: Row): Entry => ({
   id: r.id, eventId: r.event_id, kind: r.kind, playerId: r.player_id, teamId: r.team_id, status: r.status, statusNote: r.status_note,
+  flightId: r.flight_id ?? null,
 })
 const hhmm = (t: string | null) => (t ? t.slice(0, 5) : null)
 
@@ -225,7 +231,7 @@ export class SupabaseRepo implements Repo {
     const id = await run(
       this.sb.rpc('create_event', {
         p_name: i.name.trim(), p_course: i.courseId, p_tee: i.teeId, p_date: i.date, p_timezone: i.timezone,
-        p_description: i.description, p_format: i.format, p_start_type: i.startType, p_tiebreak: i.tiebreak,
+        p_description: i.description, p_team_size: i.teamSize, p_segments: i.segments, p_start_type: i.startType, p_tiebreak: i.tiebreak,
       }),
     )
     return id as string
@@ -235,31 +241,31 @@ export class SupabaseRepo implements Repo {
     const evRows = (await run(this.sb.from('events').select('*').eq('id', eventId).limit(1))) as Row[]
     if (!evRows[0]) throw new AppError('Event not found, or it is not published yet.', 'not_found')
     const event = mapEvent(evRows[0])
-    const [roundRows, course, players, teams, members, entries] = await Promise.all([
-      run(this.sb.from('rounds').select('*').eq('event_id', eventId).order('round_number').limit(1)),
+    const [rounds, course, tees, players, teams, members, entries, flights, groups, groupEntries, scores] = await Promise.all([
+      run(this.sb.from('rounds').select('*').eq('event_id', eventId).order('round_number')),
       run(this.sb.from('courses').select('*').eq('id', event.courseId).maybeSingle()),
+      run(this.sb.from('tees').select('*').eq('course_id', event.courseId).order('name')),
       run(this.sb.from('players').select('*').eq('event_id', eventId).order('last_name')),
       run(this.sb.from('teams').select('*').eq('event_id', eventId).order('name')),
       run(this.sb.from('team_members').select('*').eq('event_id', eventId)),
       run(this.sb.from('entries').select('*').eq('event_id', eventId)),
+      run(this.sb.from('flights').select('*').eq('event_id', eventId).order('sort_order').order('name')),
+      run(this.sb.from('groups').select('*').eq('event_id', eventId).order('name')),
+      run(this.sb.from('group_entries').select('*').eq('event_id', eventId)),
+      this.listScores(eventId),
     ])
-    const round = mapRound((roundRows as Row[])[0]!)
-    const [tee, holes, groups, groupEntries, scores] = await Promise.all([
-      round.teeId ? run(this.sb.from('tees').select('*').eq('id', round.teeId).maybeSingle()) : Promise.resolve(null),
-      round.teeId ? run(this.sb.from('holes').select('*').eq('tee_id', round.teeId).order('number')) : Promise.resolve([]),
-      run(this.sb.from('groups').select('*').eq('round_id', round.id).order('name')),
-      run(this.sb.from('group_entries').select('*').eq('round_id', round.id)),
-      this.listScores(round.id),
-    ])
+    const teeIds = (tees as Row[]).map((t) => t.id)
+    const holes = teeIds.length ? ((await run(this.sb.from('holes').select('*').in('tee_id', teeIds).order('number'))) as Row[]) : []
     const memberRows = members as Row[]
     const geRows = groupEntries as Row[]
     return {
       event,
       course: course ? mapCourse(course as Row) : null,
-      tee: tee ? mapTee(tee as Row) : null,
-      holes: (holes as Row[]).map(mapHole),
-      round,
-      players: (players as Row[]).map((p): Player => ({ id: p.id, eventId: p.event_id, firstName: p.first_name, lastName: p.last_name })),
+      tees: (tees as Row[]).map(mapTee),
+      holes: holes.map(mapHole),
+      rounds: (rounds as Row[]).map(mapRound),
+      flights: (flights as Row[]).map(mapFlight),
+      players: (players as Row[]).map((p): Player => ({ id: p.id, eventId: p.event_id, firstName: p.first_name, lastName: p.last_name, teeId: p.tee_id ?? null })),
       teams: (teams as Row[]).map((t): Team => ({
         id: t.id, eventId: t.event_id, name: t.name,
         playerIds: memberRows.filter((m) => m.team_id === t.id).map((m) => m.player_id),
@@ -273,15 +279,17 @@ export class SupabaseRepo implements Repo {
     }
   }
 
-  async updateEvent(eventId: string, patch: Partial<Pick<GolfEvent, 'name' | 'date' | 'timezone' | 'description' | 'tiebreakPolicy'>>) {
+  async updateEvent(eventId: string, patch: EventPatch) {
     const row: Row = {}
     if (patch.name !== undefined) row.name = patch.name.trim()
     if (patch.date !== undefined) row.event_date = patch.date
     if (patch.timezone !== undefined) row.timezone = patch.timezone
     if (patch.description !== undefined) row.description = patch.description
     if (patch.tiebreakPolicy !== undefined) row.tiebreak_policy = patch.tiebreakPolicy
+    if (patch.teamSize !== undefined) row.team_size = patch.teamSize
+    if (patch.cumulative !== undefined) row.cumulative = patch.cumulative
+    if (patch.isTemplate !== undefined) row.is_template = patch.isTemplate
     await run(this.sb.from('events').update(row).eq('id', eventId))
-    if (patch.date) await run(this.sb.from('rounds').update({ round_date: patch.date }).eq('event_id', eventId))
   }
   async updateRegistrationSettings(eventId: string, r: RegistrationSettings) {
     await run(
@@ -291,13 +299,40 @@ export class SupabaseRepo implements Repo {
       }).eq('id', eventId),
     )
   }
-  async updateRound(roundId: string, patch: { teeId?: string | null; format?: Format; startType?: StartType }) {
+  async updateRound(roundId: string, patch: RoundPatch) {
     const row: Row = {}
+    if (patch.date !== undefined) row.round_date = patch.date
     if (patch.teeId !== undefined) row.tee_id = patch.teeId
-    if (patch.format !== undefined) row.format = patch.format
+    if (patch.segments !== undefined) row.segments = patch.segments
+    if (patch.useFlights !== undefined) row.use_flights = patch.useFlights
     if (patch.startType !== undefined) row.start_type = patch.startType
     await run(this.sb.from('rounds').update(row).eq('id', roundId))
   }
+  async addRound(eventId: string) {
+    return (await run(this.sb.rpc('add_round', { p_event: eventId }))) as string
+  }
+  async deleteRound(roundId: string) {
+    await run(this.sb.rpc('delete_round', { p_round: roundId }))
+  }
+  async duplicateEvent(eventId: string, name: string, date: string, asTemplate: boolean) {
+    return (await run(this.sb.rpc('duplicate_event', { p_source: eventId, p_name: name, p_date: date, p_as_template: asTemplate }))) as string
+  }
+
+  // ── Flights ──
+  async createFlight(eventId: string, name: string, sortOrder: number) {
+    const r = await run(this.sb.from('flights').insert({ event_id: eventId, name: name.trim(), sort_order: sortOrder }).select('id').single())
+    return (r as Row).id as string
+  }
+  async updateFlight(flightId: string, name: string, sortOrder: number) {
+    await run(this.sb.from('flights').update({ name: name.trim(), sort_order: sortOrder }).eq('id', flightId))
+  }
+  async deleteFlight(flightId: string) {
+    await run(this.sb.from('flights').delete().eq('id', flightId))
+  }
+  async setEntryFlights(eventId: string, assignments: { entryId: string; flightId: string | null }[]) {
+    await run(this.sb.rpc('set_entry_flights', { p_event: eventId, p_assignments: assignments.map((a) => ({ entry_id: a.entryId, flight_id: a.flightId })) }))
+  }
+
   async deleteEvent(eventId: string) {
     const rows = await run(this.sb.from('events').delete().eq('id', eventId).select('id'))
     if (!(rows as Row[]).length) throw new AppError('Only draft events can be deleted, and only by an admin.', 'forbidden')
@@ -316,6 +351,9 @@ export class SupabaseRepo implements Repo {
   }
   async removePlayer(playerId: string) {
     await run(this.sb.from('players').delete().eq('id', playerId))
+  }
+  async setPlayerTee(playerId: string, teeId: string | null) {
+    await run(this.sb.from('players').update({ tee_id: teeId }).eq('id', playerId))
   }
   async listContacts(eventId: string): Promise<PlayerContact[]> {
     const rows = await run(this.sb.from('player_contacts').select('*').eq('event_id', eventId))
@@ -461,20 +499,20 @@ export class SupabaseRepo implements Repo {
   }
 
   // ── Scores ──
-  async setScore(roundId: string, entryId: string, hole: number, strokes: number, expectedVersion: number | null, reason: string) {
+  async setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string) {
     const r = await run(
-      this.sb.rpc('set_score', { p_round: roundId, p_entry: entryId, p_hole: hole, p_strokes: strokes, p_expected_version: expectedVersion, p_reason: reason }).single(),
+      this.sb.rpc('set_score', { ...slotArgs(slot), p_strokes: strokes, p_expected_version: expectedVersion, p_reason: reason }).single(),
     )
     return mapScore(r as Row)
   }
-  async clearScore(roundId: string, entryId: string, hole: number, expectedVersion: number, reason: string) {
-    await run(this.sb.rpc('clear_score', { p_round: roundId, p_entry: entryId, p_hole: hole, p_expected_version: expectedVersion, p_reason: reason }))
+  async clearScore(slot: ScoreSlot, expectedVersion: number, reason: string) {
+    await run(this.sb.rpc('clear_score', { ...slotArgs(slot), p_expected_version: expectedVersion, p_reason: reason }))
   }
-  async listScores(roundId: string) {
-    // 120 entries × 18 holes = 2,160 rows; page past PostgREST's default 1,000-row cap.
+  async listScores(eventId: string) {
+    // 45 teams × 3 players × 18 holes × 2 rounds ≈ 4,900 rows; page past PostgREST's 1,000-row cap.
     const out: Score[] = []
     for (let from = 0; ; from += 1000) {
-      const rows = (await run(this.sb.from('scores').select('*').eq('round_id', roundId).order('id').range(from, from + 999))) as Row[]
+      const rows = (await run(this.sb.from('scores').select('*').eq('event_id', eventId).order('id').range(from, from + 999))) as Row[]
       out.push(...rows.map(mapScore))
       if (rows.length < 1000) break
     }
@@ -483,7 +521,7 @@ export class SupabaseRepo implements Repo {
   async listAudit(eventId: string): Promise<ScoreAudit[]> {
     const rows = await run(this.sb.from('score_audit').select('*').eq('event_id', eventId).order('id', { ascending: false }).limit(500))
     return (rows as Row[]).map((r) => ({
-      id: String(r.id), roundId: r.round_id, entryId: r.entry_id, hole: r.hole, action: r.action, oldStrokes: r.old_strokes,
+      id: String(r.id), roundId: r.round_id, entryId: r.entry_id, playerId: r.player_id ?? null, hole: r.hole, action: r.action, oldStrokes: r.old_strokes,
       newStrokes: r.new_strokes, reason: r.reason, changedBy: r.changed_by, changedByLabel: r.changed_by_email || 'database console', changedAt: r.changed_at,
     }))
   }
@@ -492,13 +530,14 @@ export class SupabaseRepo implements Repo {
     return (rows as Row[]).map((r) => ({ id: String(r.id), eventId: r.event_id, action: r.action, detail: r.detail, actorLabel: r.actor_email || 'database console', at: r.at }))
   }
 
-  subscribe(eventId: string, roundId: string, onChange: (what: 'scores' | 'all') => void) {
+  subscribe(eventId: string, onChange: (what: 'scores' | 'all') => void) {
     const ch = this.sb
       .channel(`event-${eventId}-${Math.random().toString(36).slice(2)}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'scores', filter: `round_id=eq.${roundId}` }, () => onChange('scores'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scores', filter: `event_id=eq.${eventId}` }, () => onChange('scores'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'entries', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventId}` }, () => onChange('all'))
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'rounds', filter: `id=eq.${roundId}` }, () => onChange('all'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rounds', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'flights', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'registrations', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .subscribe()
     return () => void this.sb.removeChannel(ch)

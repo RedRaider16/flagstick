@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { useApp, usePath } from '../../app/context'
 import { useAction } from '../../app/hooks'
 import { download, ErrorNote, Loading, Notice, slug, useReasonDialog } from '../../components/ui'
-import { formatStamp } from '../../domain/derive'
+import { formatStamp, isTeamEvent } from '../../domain/derive'
 import {
   formatHandicapIndex,
   formatMoney,
@@ -52,7 +52,7 @@ export function Registrations() {
   const { repo } = useApp()
   const p = usePath()
   const { event } = bundle
-  const isTeam = bundle.round.format === 'scramble_2'
+  const isTeam = isTeamEvent(bundle)
   const [regs, setRegs] = useState<Registration[] | null>(null)
   const [filter, setFilter] = useState<'active' | 'waitlisted' | 'unpaid' | 'cancelled' | 'all'>('active')
   const list = useAction()

@@ -3,6 +3,7 @@ import type {
   Course,
   Entry,
   EventLogEntry,
+  Flight,
   GolfEvent,
   Group,
   Hole,
@@ -19,7 +20,7 @@ import type {
 } from '../domain/types'
 
 export interface DemoState {
-  schema: 2
+  schema: 3
   role: 'admin' | 'scorekeeper' | 'spectator'
   organizers: boolean
   courses: (Course & { ownerId: string })[]
@@ -27,6 +28,7 @@ export interface DemoState {
   holes: Hole[]
   events: GolfEvent[]
   rounds: Round[]
+  flights: Flight[]
   players: Player[]
   contacts: PlayerContact[]
   teams: Team[]
@@ -84,7 +86,7 @@ export function buildDemoState(): DemoState {
   const holes: Hole[] = PARS.map((par, i) => ({ teeId: tee.id, number: i + 1, par, yardage: YARDS[i]!, strokeIndex: SI[i]! }))
 
   const state: DemoState = {
-    schema: 2,
+    schema: 3,
     role: 'admin',
     organizers: true,
     courses: [course],
@@ -92,6 +94,7 @@ export function buildDemoState(): DemoState {
     holes,
     events: [],
     rounds: [],
+    flights: [],
     players: [],
     contacts: [],
     teams: [],
@@ -111,8 +114,9 @@ export function buildDemoState(): DemoState {
     timezone: 'America/Chicago', description: 'Fictional 16-player individual stroke play event for trying the app.',
     status: 'in_progress', tiebreakPolicy: 'card_back', createdAt: now,
     registration: { open: false, closesAt: null, maxPlayers: 16, entryFeeCents: 6000, paymentInstructions: 'Pay at the pro shop before your tee time.' },
+    teamSize: 1, cumulative: true, isTemplate: false,
   }
-  const r1: Round = { id: 'rd-classic', eventId: e1.id, roundNumber: 1, date: today, teeId: tee.id, format: 'stroke_individual', startType: 'tee_times', status: 'open' }
+  const r1: Round = { id: 'rd-classic', eventId: e1.id, roundNumber: 1, date: today, teeId: tee.id, segments: [{ from: 1, to: 18, method: 'individual', count: 1 }], useFlights: true, startType: 'tee_times', status: 'open' }
   state.events.push(e1)
   state.rounds.push(r1)
   const thru = [12, 9, 5, 0]
@@ -121,8 +125,8 @@ export function buildDemoState(): DemoState {
     for (let k = 0; k < 4; k++) {
       const idx = g * 4 + k
       const [first, last] = NAMES[idx]!
-      const player: Player = { id: `pl-c${idx}`, eventId: e1.id, firstName: first, lastName: last }
-      const entry: Entry = { id: `en-c${idx}`, eventId: e1.id, kind: 'player', playerId: player.id, teamId: null, status: 'active', statusNote: '' }
+      const player: Player = { id: `pl-c${idx}`, eventId: e1.id, firstName: first, lastName: last, teeId: null }
+      const entry: Entry = { id: `en-c${idx}`, eventId: e1.id, kind: 'player', playerId: player.id, teamId: null, status: 'active', statusNote: '', flightId: null }
       state.players.push(player)
       state.contacts.push({ playerId: player.id, email: `${first.toLowerCase()}@example.com`, phone: '' })
       state.entries.push(entry)
@@ -130,8 +134,8 @@ export function buildDemoState(): DemoState {
       const skill = (idx % 5) * 0.07 - 0.1
       for (let h = 1; h <= thru[g]!; h++) {
         const strokes = holeScore(PARS[h - 1]!, r, skill)
-        state.scores.push({ id: `sc-c${idx}-${h}`, roundId: r1.id, entryId: entry.id, hole: h, strokes, version: 1, updatedAt: now, updatedBy: DEMO_USER.id })
-        state.audit.push({ id: `au-c${idx}-${h}`, roundId: r1.id, entryId: entry.id, hole: h, action: 'insert', oldStrokes: null, newStrokes: strokes, reason: '', changedBy: DEMO_USER.id, changedByLabel: 'demo scorekeeper', changedAt: now })
+        state.scores.push({ id: `sc-c${idx}-${h}`, roundId: r1.id, entryId: entry.id, playerId: null, hole: h, strokes, version: 1, updatedAt: now, updatedBy: DEMO_USER.id })
+        state.audit.push({ id: `au-c${idx}-${h}`, roundId: r1.id, entryId: entry.id, playerId: null, hole: h, action: 'insert', oldStrokes: null, newStrokes: strokes, reason: '', changedBy: DEMO_USER.id, changedByLabel: 'demo scorekeeper', changedAt: now })
       }
     }
     state.groups.push(group)
@@ -157,8 +161,9 @@ export function buildDemoState(): DemoState {
       entryFeeCents: 7500,
       paymentInstructions: 'Pay by cash or check at check-in, or Venmo the organizer with your team name.',
     },
+    teamSize: 2, cumulative: true, isTemplate: false,
   }
-  const r2: Round = { id: 'rd-scramble', eventId: e2.id, roundNumber: 1, date: today, teeId: tee.id, format: 'scramble_2', startType: 'shotgun', status: 'open' }
+  const r2: Round = { id: 'rd-scramble', eventId: e2.id, roundNumber: 1, date: today, teeId: tee.id, segments: [{ from: 1, to: 18, method: 'scramble', count: 1 }], useFlights: true, startType: 'shotgun', status: 'open' }
   state.events.push(e2)
   state.rounds.push(r2)
   const teamNames = ['Sand Savers', 'Dogleg Duo', 'Fairway Finders', 'Pin Seekers', 'Bogey Busters', 'Lip Outs']
@@ -167,7 +172,7 @@ export function buildDemoState(): DemoState {
     for (let k = 0; k < 2; k++) {
       const idx = 12 + t * 2 + k
       const [first, last] = NAMES[idx]!
-      const p: Player = { id: `pl-s${idx}`, eventId: e2.id, firstName: first, lastName: last }
+      const p: Player = { id: `pl-s${idx}`, eventId: e2.id, firstName: first, lastName: last, teeId: null }
       state.players.push(p)
       state.contacts.push({ playerId: p.id, email: `${first.toLowerCase()}@example.com`, phone: '' })
       ids.push(p.id)
@@ -184,11 +189,66 @@ export function buildDemoState(): DemoState {
     })
     ids.forEach((pid, k) => state.handicaps.push({ playerId: pid, handicapIndex: Math.round((4 + ((t * 7 + k * 5) % 20) + 0.3) * 10) / 10, source: 'Self-reported at registration', asOf: now.slice(0, 10) }))
     state.teams.push(team)
-    state.entries.push({ id: `en-s${t}`, eventId: e2.id, kind: 'team', playerId: null, teamId: team.id, status: 'active', statusNote: '' })
+    state.entries.push({ id: `en-s${t}`, eventId: e2.id, kind: 'team', playerId: null, teamId: team.id, status: 'active', statusNote: '', flightId: null })
   }
   ;[1, 4, 7].forEach((start, g) => {
     state.groups.push({ id: `gr-s${g + 1}`, roundId: r2.id, name: `Hole ${start}`, teeTime: '13:00', startingHole: start, entryIds: [`en-s${g * 2}`, `en-s${g * 2 + 1}`] })
   })
   state.staff.push({ id: 'st-s-admin', eventId: e2.id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
+
+  // ── Event 3: 3-person teams, best 2 balls of 3, two days, flighted; day 1 done ──
+  const tomorrow = new Date(Date.now() + 864e5).toISOString().slice(0, 10)
+  const e3: GolfEvent = {
+    id: 'ev-showdown', publicCode: 'DEMO03', name: 'Demo Spring Showdown', courseId: course.id, date: today,
+    timezone: 'America/Chicago', description: 'Fictional 3-person teams, best 2 balls of 3 count on every hole, over two days. Two flights.',
+    status: 'in_progress', tiebreakPolicy: 'share', createdAt: now,
+    registration: { open: false, closesAt: null, maxPlayers: 36, entryFeeCents: 25000, paymentInstructions: 'Pay at check-in.' },
+    teamSize: 3, cumulative: true, isTemplate: false,
+  }
+  state.events.push(e3)
+  const best2 = [{ from: 1, to: 18, method: 'best_ball' as const, count: 2 }]
+  const d1: Round = { id: 'rd-sd1', eventId: e3.id, roundNumber: 1, date: today, teeId: tee.id, segments: best2, useFlights: true, startType: 'shotgun', status: 'finalized' }
+  const d2: Round = { id: 'rd-sd2', eventId: e3.id, roundNumber: 2, date: tomorrow, teeId: tee.id, segments: best2, useFlights: true, startType: 'shotgun', status: 'open' }
+  state.rounds.push(d1, d2)
+  const flights: Flight[] = [
+    { id: 'fl-champ', eventId: e3.id, name: 'Championship', sortOrder: 1 },
+    { id: 'fl-first', eventId: e3.id, name: 'First', sortOrder: 2 },
+  ]
+  state.flights.push(...flights)
+  const trioNames = ['Three Putts', 'Hook Line & Sinker', 'Grip It', 'Shank Redemption', 'Tee Party', 'Fore Play']
+  trioNames.forEach((name, t) => {
+    const ids: string[] = []
+    for (let k = 0; k < 3; k++) {
+      const [first, last] = NAMES[(t * 3 + k) % NAMES.length]!
+      const p: Player = { id: `pl-d${t}-${k}`, eventId: e3.id, firstName: first, lastName: last, teeId: null }
+      state.players.push(p)
+      state.contacts.push({ playerId: p.id, email: '', phone: '' })
+      ids.push(p.id)
+    }
+    state.teams.push({ id: `tm-d${t}`, eventId: e3.id, name, playerIds: ids })
+    const entry: Entry = { id: `en-d${t}`, eventId: e3.id, kind: 'team', playerId: null, teamId: `tm-d${t}`, status: 'active', statusNote: '', flightId: t < 3 ? 'fl-champ' : 'fl-first' }
+    state.entries.push(entry)
+    const skill = t * 0.04 - 0.08
+    for (const [round, thruN] of [[d1, 18], [d2, t % 2 ? 9 : 6]] as const)
+      for (let h = 1; h <= thruN; h++)
+        ids.forEach((pid, k) => {
+          // The odd player picks up now and then: a missing score, never zero.
+          if ((h + k + t) % 11 === 0) return
+          const strokes = holeScore(PARS[h - 1]!, r, skill)
+          state.scores.push({ id: `sc-d${round.roundNumber}-${t}-${k}-${h}`, roundId: round.id, entryId: entry.id, playerId: pid, hole: h, strokes, version: 1, updatedAt: now, updatedBy: DEMO_USER.id })
+        })
+  })
+  ;[1, 4, 7].forEach((start, g) => {
+    for (const round of [d1, d2])
+      state.groups.push({ id: `gr-d${round.roundNumber}-${g}`, roundId: round.id, name: `Hole ${start}`, teeTime: '08:30', startingHole: start, entryIds: [`en-d${g * 2}`, `en-d${g * 2 + 1}`] })
+  })
+  state.staff.push({ id: 'st-d-admin', eventId: e3.id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
+  state.log.push({ id: 'lg-d1', eventId: e3.id, action: 'finalized', detail: 'Round 1', actorLabel: DEMO_USER.email, at: now })
+
+  // ── Template: the same event set up for next year ──
+  state.events.push({ ...e3, id: 'ev-showdown-tpl', publicCode: 'DEMOT1', name: 'Demo Spring Showdown (template)', status: 'draft', isTemplate: true, description: e3.description })
+  state.rounds.push({ ...d1, id: 'rd-tpl1', eventId: 'ev-showdown-tpl', status: 'open' }, { ...d2, id: 'rd-tpl2', eventId: 'ev-showdown-tpl', status: 'open' })
+  state.flights.push(...flights.map((f) => ({ ...f, id: `${f.id}-tpl`, eventId: 'ev-showdown-tpl' })))
+  state.staff.push({ id: 'st-tpl-admin', eventId: 'ev-showdown-tpl', email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
   return state
 }

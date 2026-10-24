@@ -28,22 +28,22 @@ export function useBundle(eventId: string | undefined) {
     void reload()
   }, [reload])
 
-  const roundId = bundle?.round.id
+  const loaded = Boolean(bundle)
   useEffect(() => {
-    if (!eventId || !roundId) return
+    if (!eventId || !loaded) return
     const flush = async () => {
       const what = pending.current
       pending.current = null
       if (what === 'scores') {
         try {
-          const scores = await repo.listScores(roundId)
+          const scores = await repo.listScores(eventId)
           setBundle((b) => (b ? { ...b, scores } : b))
         } catch {
           void reload()
         }
       } else if (what === 'all') void reload()
     }
-    const unsub = repo.subscribe(eventId, roundId, (what) => {
+    const unsub = repo.subscribe(eventId, (what) => {
       pending.current = pending.current === 'all' || what === 'all' ? 'all' : 'scores'
       if (timer.current) clearTimeout(timer.current)
       timer.current = setTimeout(() => void flush(), 250)
@@ -54,7 +54,7 @@ export function useBundle(eventId: string | undefined) {
       setConnected(false)
       if (timer.current) clearTimeout(timer.current)
     }
-  }, [repo, eventId, roundId, reload])
+  }, [repo, eventId, loaded, reload])
 
   return { bundle, setBundle, error, reload, connected }
 }

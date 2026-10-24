@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { useApp, usePath } from '../../app/context'
 import { useAction } from '../../app/hooks'
-import { ErrorNote, Notice, useReasonDialog } from '../../components/ui'
-import { formatTeeTime, nameOf } from '../../domain/derive'
+import { ErrorNote, Notice, ScopeTabs, useReasonDialog } from '../../components/ui'
+import { currentRound, formatTeeTime, isTeamEvent, nameOf, roundGroups } from '../../domain/derive'
 import type { Group } from '../../domain/types'
 import { useManage } from './ManageLayout'
 
@@ -19,31 +19,35 @@ export function Groups() {
   const p = usePath()
   const { busy, error, run } = useAction()
   const dialog = useReasonDialog()
-  const { round, event } = bundle
-  const isTeam = round.format === 'scramble_2'
+  const { event } = bundle
+  const [roundId, setRoundId] = useState<string | null>(null)
+  const round = bundle.rounds.find((r) => r.id === roundId) ?? currentRound(bundle)
+  const roundGs = roundGroups(bundle, round.id)
+  const prevRound = bundle.rounds.find((r) => r.roundNumber === round.roundNumber - 1)
+  const isTeam = isTeamEvent(bundle)
   const shotgun = round.startType === 'shotgun'
   const final = event.status === 'finalized'
   const unit = isTeam ? 'team' : 'player'
 
-  const [size, setSize] = useState(isTeam ? 2 : 4)
+  const [size, setSize] = useState(isTeam ? (event.teamSize >= 3 ? 1 : 2) : 4)
   const [first, setFirst] = useState('08:00')
   const [interval, setIntervalMins] = useState(10)
   const [newName, setNewName] = useState('')
   const [newTime, setNewTime] = useState('')
   const [newHole, setNewHole] = useState(1)
 
-  const groups = [...bundle.groups].sort((a, b) => (shotgun ? a.startingHole - b.startingHole : (a.teeTime ?? '').localeCompare(b.teeTime ?? '')) || a.name.localeCompare(b.name, undefined, { numeric: true }))
+  const groups = [...roundGs].sort((a, b) => (shotgun ? a.startingHole - b.startingHole : (a.teeTime ?? '').localeCompare(b.teeTime ?? '')) || a.name.localeCompare(b.name, undefined, { numeric: true }))
   const entries = [...bundle.entries].sort((a, b) => nameOf(bundle, a).localeCompare(nameOf(bundle, b)))
-  const groupOf = (entryId: string) => bundle.groups.find((g) => g.entryIds.includes(entryId))
+  const groupOf = (entryId: string) => roundGs.find((g) => g.entryIds.includes(entryId))
   const unassigned = entries.filter((e) => !groupOf(e.id))
 
   const generate = () =>
     run(async () => {
       const list = [...unassigned]
       let i = 0
-      const existing = bundle.groups.length
+      const existing = roundGs.length
       const holeUse = new Map<number, number>()
-      bundle.groups.forEach((g) => holeUse.set(g.startingHole, (holeUse.get(g.startingHole) ?? 0) + 1))
+      roundGs.forEach((g) => holeUse.set(g.startingHole, (holeUse.get(g.startingHole) ?? 0) + 1))
       while (list.length) {
         const chunk = list.splice(0, size)
         let name: string
@@ -66,10 +70,23 @@ export function Groups() {
           teeTime = addMinutes(first, (existing + i) * interval)
         }
         let n = 1
-        while (bundle.groups.some((g) => g.name === name)) name = `${name} (${++n})`
+        while (roundGs.some((g) => g.name === name)) name = `${name} (${++n})`
         const gid = await repo.createGroup(round.id, event.id, { name, teeTime, startingHole })
         for (const e of chunk) await repo.assignEntry(round.id, event.id, e.id, gid)
         i++
+      }
+      await reload()
+    })
+
+  const copyPrevious = () =>
+    run(async () => {
+      if (!prevRound) return
+      for (const g of roundGroups(bundle, prevRound.id)) {
+        let name = g.name
+        let n = 1
+        while (roundGs.some((x) => x.name === name)) name = `${g.name} (${++n})`
+        const gid = await repo.createGroup(round.id, event.id, { name, teeTime: g.teeTime, startingHole: g.startingHole })
+        for (const id of g.entryIds) if (!groupOf(id)) await repo.assignEntry(round.id, event.id, id, gid)
       }
       await reload()
     })
@@ -78,6 +95,13 @@ export function Groups() {
     <>
       {dialog.element}
       <ErrorNote error={error} />
+      <ScopeTabs label="Round" options={bundle.rounds.map((r) => ({ scope: r.id, label: `Round ${r.roundNumber}` }))} value={round.id} onChange={setRoundId} />
+      {prevRound && roundGs.length === 0 && roundGroups(bundle, prevRound.id).length > 0 && (
+        <p>
+          <button className="btn" type="button" disabled={busy || final} onClick={() => void copyPrevious()}>Copy round {prevRound.roundNumber} groups</button>{' '}
+          <span className="small muted">Same names, times and pairings; adjust afterwards.</span>
+        </p>
+      )}
       <p>
         {shotgun ? 'Shotgun start: each group begins on its own hole.' : 'Tee times: groups go off in order.'}{' '}
         <Link to={p(`manage/${event.id}/setup`)}>Change start type</Link>
@@ -128,12 +152,12 @@ export function Groups() {
         </form>
       </div>
 
-      {unassigned.length > 0 && bundle.groups.length > 0 && (
+      {unassigned.length > 0 && roundGs.length > 0 && (
         <Notice kind="warn">{unassigned.length} {unit}{unassigned.length === 1 ? ' is' : 's are'} not in a group: {unassigned.map((e) => nameOf(bundle, e)).join('; ')}</Notice>
       )}
 
       <section className="panel">
-        <h2>Groups</h2>
+        <h2>Groups{bundle.rounds.length > 1 ? `, round ${round.roundNumber}` : ''}</h2>
         {groups.length === 0 ? <p className="muted">No groups yet.</p> : (
           <div className="table-wrap">
             <table>
@@ -154,7 +178,7 @@ export function Groups() {
         )}
       </section>
 
-      {bundle.groups.length > 0 && (
+      {roundGs.length > 0 && (
         <section className="panel">
           <h2>Move {unit}s between groups</h2>
           <div className="table-wrap">

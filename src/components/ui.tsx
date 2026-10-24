@@ -46,6 +46,8 @@ export function ReasonDialog(props: {
   required?: boolean
   confirmLabel: string
   danger?: boolean
+  /** Starting text for the field. */
+  initial?: string
   onConfirm: (reason: string) => void
   onCancel: () => void
 }) {
@@ -55,10 +57,10 @@ export function ReasonDialog(props: {
     const d = ref.current
     if (!d) return
     if (props.open && !d.open) {
-      setReason('')
+      setReason(props.initial ?? '')
       d.showModal()
     } else if (!props.open && d.open) d.close()
-  }, [props.open])
+  }, [props.open, props.initial])
   const askReason = props.label !== undefined
   return (
     <dialog ref={ref} onCancel={(e) => (e.preventDefault(), props.onCancel())} aria-labelledby="dlg-title">
@@ -98,9 +100,10 @@ export function useReasonDialog() {
     required?: boolean
     confirmLabel: string
     danger?: boolean
+    initial?: string
     resolve: (r: string | null) => void
   }>(null)
-  const ask = (opts: { title: string; body?: ReactNode; label?: string; required?: boolean; confirmLabel: string; danger?: boolean }) =>
+  const ask = (opts: { title: string; body?: ReactNode; label?: string; required?: boolean; confirmLabel: string; danger?: boolean; initial?: string }) =>
     new Promise<string | null>((resolve) => setState({ ...opts, resolve }))
   const element = (
     <ReasonDialog
@@ -111,6 +114,7 @@ export function useReasonDialog() {
       required={state?.required}
       confirmLabel={state?.confirmLabel ?? 'OK'}
       danger={state?.danger}
+      initial={state?.initial}
       onConfirm={(r) => {
         state?.resolve(r)
         setState(null)
@@ -138,4 +142,18 @@ export function download(filename: string, text: string, type = 'text/csv;charse
 
 export function slug(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'event'
+}
+
+/** Pick one of several views (rounds, Overall). Buttons with aria-pressed. */
+export function ScopeTabs<T extends string>({ options, value, onChange, label }: { options: { scope: T; label: string }[]; value: T; onChange: (v: T) => void; label: string }) {
+  if (options.length <= 1) return null
+  return (
+    <div className="round-tabs no-print" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button key={o.scope} type="button" className="btn" aria-pressed={o.scope === value} onClick={() => onChange(o.scope)}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  )
 }

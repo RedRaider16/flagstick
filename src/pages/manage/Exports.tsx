@@ -1,11 +1,12 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { useApp, usePath } from '../../app/context'
 import { useAction } from '../../app/hooks'
-import { download, ErrorNote, slug } from '../../components/ui'
-import { buildLeaderboard, formatTeeTime, groupOfEntry, nameOf } from '../../domain/derive'
+import { download, ErrorNote, ScopeTabs, slug } from '../../components/ui'
+import { buildEventLeaderboard, currentRound, formatTeeTime, groupOfEntry, leaderboardScopes, nameOf, roundGroups, type Scope } from '../../domain/derive'
+import { ENTRY_STATUS_LABEL } from '../../domain/types'
 import { toCsv } from '../../scoring/csv'
-import { formatThru, formatToPar } from '../../scoring/leaderboard'
+import { formatToPar } from '../../scoring/leaderboard'
 import { useManage } from './ManageLayout'
 
 export function Exports() {
@@ -13,25 +14,33 @@ export function Exports() {
   const { repo } = useApp()
   const p = usePath()
   const { busy, error, run } = useAction()
-  const lb = useMemo(() => buildLeaderboard(bundle), [bundle])
+  const scopes = useMemo(() => leaderboardScopes(bundle), [bundle])
+  const [scope, setScope] = useState<Scope>(scopes[0]?.scope ?? currentRound(bundle).id)
+  const lb = useMemo(() => buildEventLeaderboard(bundle, scope), [bundle, scope])
+  const scopeRounds = scope === 'overall' ? bundle.rounds : bundle.rounds.filter((r) => r.id === scope)
+  const scopeTag = scope === 'overall' ? 'overall' : `round-${scopeRounds[0]?.roundNumber ?? 1}`
   const base = slug(bundle.event.name)
   const status = lb.final ? 'FINAL' : 'PROVISIONAL'
-  const holeNums = bundle.holes.map((h) => h.number)
+  const rows = lb.groups.flatMap((g) => g.rows.map((r) => ({ flight: g.name, r })))
+  const multi = scopeRounds.length > 1
+  const statusText = (s: keyof typeof ENTRY_STATUS_LABEL) => (s === 'active' ? '' : s.toUpperCase())
 
   const leaderboardCsv = () => {
-    const rows = lb.rows.map((r) => [r.positionLabel, r.name, r.status.toUpperCase(), formatToPar(r.toPar), formatThru(r), r.gross ?? '', r.tiebreakNote ?? '', status])
-    download(`${base}-leaderboard-${status.toLowerCase()}.csv`, toCsv(['position', 'name', 'status', 'to_par', 'thru', 'gross', 'tiebreak', 'results'], rows))
+    const out = rows.map(({ flight, r }) => [flight, r.positionLabel, r.name, statusText(r.status), formatToPar(r.toPar), r.status === 'active' ? r.thru : '', ...(multi ? r.rounds.map((c) => c.gross ?? '') : []), r.gross ?? '', r.tiebreakNote ?? '', status])
+    download(`${base}-${scopeTag}-leaderboard-${status.toLowerCase()}.csv`,
+      toCsv(['flight', 'position', 'name', 'status', 'to_par', 'thru', ...(multi ? scopeRounds.map((x) => `r${x.roundNumber}`) : []), 'gross', 'tiebreak', 'results'], out))
   }
   const scoresCsv = () => {
-    const rows = lb.rows.map((r) => [r.name, r.status.toUpperCase(), ...holeNums.map((h) => r.holeScores.get(h) ?? ''), r.gross ?? '', formatToPar(r.toPar), status])
-    download(`${base}-hole-by-hole.csv`, toCsv(['name', 'status', ...holeNums.map((h) => `h${h}`), 'gross', 'to_par', 'results'], rows))
+    const holes = Array.from({ length: 18 }, (_, i) => i + 1)
+    const out = rows.flatMap(({ flight, r }) => r.rounds.map((c, i) => [flight, r.name, statusText(r.status), scopeRounds[i]?.roundNumber ?? '', ...holes.map((h) => c.holeScores.get(h) ?? ''), c.gross ?? '', formatToPar(c.toPar), status]))
+    download(`${base}-${scopeTag}-hole-by-hole.csv`, toCsv(['flight', 'name', 'status', 'round', ...holes.map((h) => `h${h}`), 'gross', 'to_par', 'results'], out))
   }
   const pairingsCsv = () => {
-    const rows = bundle.entries.map((e) => {
-      const g = groupOfEntry(bundle.groups, e.id)
-      return [g?.name ?? '', g ? formatTeeTime(g.teeTime) : '', g?.startingHole ?? '', nameOf(bundle, e)]
-    }).sort((a, b) => String(a[0]).localeCompare(String(b[0]), undefined, { numeric: true }))
-    download(`${base}-pairings.csv`, toCsv(['group', 'time', 'starting_hole', 'entry'], rows))
+    const out = bundle.rounds.flatMap((rd) => bundle.entries.map((e) => {
+      const g = groupOfEntry(roundGroups(bundle, rd.id), e.id)
+      return [rd.roundNumber, g?.name ?? '', g ? formatTeeTime(g.teeTime) : '', g?.startingHole ?? '', nameOf(bundle, e)]
+    }).sort((a, b) => String(a[1]).localeCompare(String(b[1]), undefined, { numeric: true })))
+    download(`${base}-pairings.csv`, toCsv(['round', 'group', 'time', 'starting_hole', 'entry'], out))
   }
   const rosterCsv = () =>
     run(async () => {
@@ -50,7 +59,8 @@ export function Exports() {
       <div className="grid-2" style={{ alignItems: 'start' }}>
         <section className="panel">
           <h2>CSV downloads</h2>
-          <p className="small muted">Results files are labelled {lb.final ? 'final' : 'provisional'} in the file name and in a column.</p>
+          <ScopeTabs label="Results for" options={scopes} value={scope} onChange={setScope} />
+          <p className="small muted">Results files are labelled {lb.final ? 'final' : 'provisional'} in the file name and in a column. Team counting scores are exported; best-ball player scores are in the app.</p>
           <div className="stack">
             <div><button className="btn" type="button" onClick={leaderboardCsv}>Leaderboard</button></div>
             <div><button className="btn" type="button" onClick={scoresCsv}>Hole-by-hole scores</button></div>
@@ -64,8 +74,13 @@ export function Exports() {
         <section className="panel">
           <h2>Print</h2>
           <div className="stack">
-            <div><Link className="btn" to={p(`manage/${bundle.event.id}/print/pairings`)}>Pairings sheet</Link></div>
-            <div><Link className="btn" to={p(`manage/${bundle.event.id}/print/scorecards`)}>Scorecards, one per group</Link></div>
+            {bundle.rounds.map((rd) => (
+              <div key={rd.id} className="row">
+                {bundle.rounds.length > 1 && <strong style={{ minWidth: '4.5rem' }}>Round {rd.roundNumber}</strong>}
+                <Link className="btn" to={p(`manage/${bundle.event.id}/print/pairings?round=${rd.roundNumber}`)}>Pairings sheet</Link>
+                <Link className="btn" to={p(`manage/${bundle.event.id}/print/scorecards?round=${rd.roundNumber}`)}>Scorecards</Link>
+              </div>
+            ))}
             <div><Link className="btn" to={p(`e/${bundle.event.publicCode}`)}>Leaderboard</Link> <span className="small muted">then use your browser's Print</span></div>
           </div>
         </section>

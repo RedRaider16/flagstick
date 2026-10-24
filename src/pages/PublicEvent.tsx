@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useApp, usePath } from '../app/context'
+import { boardRounds, cardDetail } from '../app/board'
 import { useAccess, useBundle, useTitle } from '../app/hooks'
 import { Leaderboard } from '../components/Leaderboard'
-import { ErrorNote, Loading, StatusBadge } from '../components/ui'
-import { buildLeaderboard, formatDate, formatTeeTime, nameOf } from '../domain/derive'
-import { FORMAT_LABEL, formatMoney } from '../domain/types'
+import { ErrorNote, Loading, ScopeTabs, StatusBadge } from '../components/ui'
+import { buildEventLeaderboard, currentRound, eventDates, eventFormatText, formatTeeTime, isTeamEvent, leaderboardScopes, nameOf, roundGroups, teeOf, type Scope } from '../domain/derive'
+import { formatMoney } from '../domain/types'
 import { formatCloses, registrationState } from './Register'
 
 export function PublicEvent() {
@@ -22,9 +23,13 @@ export function PublicEvent() {
 
   const { bundle, error, connected } = useBundle(eventId ?? undefined)
   const access = useAccess(eventId ?? undefined)
-  const lb = useMemo(() => (bundle ? buildLeaderboard(bundle) : null), [bundle])
+  const [scope, setScope] = useState<Scope | null>(null)
+  const scopes = useMemo(() => (bundle ? leaderboardScopes(bundle) : []), [bundle])
+  const active: Scope | null = bundle ? (scope && scopes.some((x) => x.scope === scope) ? scope : bundle.event.cumulative && scopes[0]?.scope === 'overall' ? 'overall' : currentRound(bundle).id) : null
+  const lb = useMemo(() => (bundle && active ? buildEventLeaderboard(bundle, active) : null), [bundle, active])
   useTitle(bundle ? `${bundle.event.name} leaderboard` : 'Leaderboard')
   const [tab, setTab] = useState<'board' | 'pairings'>('board')
+  const [pairRound, setPairRound] = useState<string | null>(null)
 
   if (missing)
     return (
@@ -35,10 +40,12 @@ export function PublicEvent() {
       </>
     )
   if (error) return <ErrorNote error={error} />
-  if (!bundle || !lb) return <Loading />
+  if (!bundle || !lb || !active) return <Loading />
 
-  const isTeam = bundle.round.format === 'scramble_2'
-  const groups = [...bundle.groups].sort((a, b) => (a.teeTime ?? '').localeCompare(b.teeTime ?? '') || a.startingHole - b.startingHole || a.name.localeCompare(b.name))
+  const isTeam = isTeamEvent(bundle)
+  const pr = bundle.rounds.find((r) => r.id === pairRound) ?? currentRound(bundle)
+  const tees = [...new Set(bundle.rounds.map((r) => teeOf(bundle, r.teeId)?.name).filter(Boolean))]
+  const groups = [...roundGroups(bundle, pr.id)].sort((a, b) => (a.teeTime ?? '').localeCompare(b.teeTime ?? '') || a.startingHole - b.startingHole || a.name.localeCompare(b.name))
 
   return (
     <>
@@ -46,9 +53,9 @@ export function PublicEvent() {
         <div>
           <h1>{bundle.event.name}</h1>
           <div className="event-meta">
-            {formatDate(bundle.event.date)} at {bundle.course?.name ?? 'course TBA'}{bundle.tee ? ` (${bundle.tee.name} tees)` : ''}
+            {eventDates(bundle)} at {bundle.course?.name ?? 'course TBA'}{tees.length ? ` (${tees.join(', ')} tees)` : ''}
           </div>
-          <div className="event-meta">{FORMAT_LABEL[bundle.round.format]} <StatusBadge status={bundle.event.status} /></div>
+          <div className="event-meta">{eventFormatText(bundle)}{bundle.flights.length > 0 && `, ${bundle.flights.length} flights`} <StatusBadge status={bundle.event.status} /></div>
         </div>
         <div className="row no-print">
           {access?.role === 'admin' && <Link className="btn" to={p(`manage/${bundle.event.id}`)}>Manage</Link>}
@@ -81,22 +88,27 @@ export function PublicEvent() {
       </div>
 
       {tab === 'board' ? (
-        <Leaderboard lb={lb} holes={bundle.holes} title={isTeam ? 'Team leaderboard' : 'Leaderboard'} isTeam={isTeam} live={connected && repo.mode === 'live'} />
+        <>
+          <ScopeTabs label="Leaderboard view" options={scopes} value={active} onChange={setScope} />
+          <Leaderboard lb={lb} rounds={boardRounds(bundle, active)} detail={cardDetail(bundle)}
+            title={`${scopes.find((x) => x.scope === active)?.label ?? 'Leaderboard'}${isTeam ? ' — teams' : ''}`} isTeam={isTeam} live={connected && repo.mode === 'live'} />
+        </>
       ) : (
         <section className="panel">
-          <h2>Pairings</h2>
+          <h2>Pairings{bundle.rounds.length > 1 ? `, round ${pr.roundNumber}` : ''}</h2>
+          <ScopeTabs label="Round" options={bundle.rounds.map((r) => ({ scope: r.id, label: `Round ${r.roundNumber}` }))} value={pr.id} onChange={setPairRound} />
           {groups.length === 0 ? <p className="muted">Pairings haven't been posted yet.</p> : (
             <div className="table-wrap">
               <table>
-                <thead><tr><th scope="col">Group</th><th scope="col">{bundle.round.startType === 'shotgun' ? 'Start hole' : 'Tee time'}</th><th scope="col">{isTeam ? 'Teams' : 'Players'}</th></tr></thead>
+                <thead><tr><th scope="col">Group</th><th scope="col">{pr.startType === 'shotgun' ? 'Start hole' : 'Tee time'}</th><th scope="col">{isTeam ? 'Teams' : 'Players'}</th></tr></thead>
                 <tbody>
                   {groups.map((g) => (
                     <tr key={g.id}>
                       <td><strong>{g.name}</strong></td>
                       <td className="num" style={{ fontSize: '1.1rem' }}>
-                        {bundle.round.startType === 'shotgun' ? `Hole ${g.startingHole}` : formatTeeTime(g.teeTime)}
-                        {bundle.round.startType === 'shotgun' && g.teeTime && <span className="muted small"> at {formatTeeTime(g.teeTime)}</span>}
-                        {bundle.round.startType === 'tee_times' && g.startingHole !== 1 && <span className="muted small"> from hole {g.startingHole}</span>}
+                        {pr.startType === 'shotgun' ? `Hole ${g.startingHole}` : formatTeeTime(g.teeTime)}
+                        {pr.startType === 'shotgun' && g.teeTime && <span className="muted small"> at {formatTeeTime(g.teeTime)}</span>}
+                        {pr.startType === 'tee_times' && g.startingHole !== 1 && <span className="muted small"> from hole {g.startingHole}</span>}
                       </td>
                       <td>{g.entryIds.map((id) => bundle.entries.find((e) => e.id === id)).filter(Boolean).map((e) => nameOf(bundle, e!)).join('; ')}</td>
                     </tr>

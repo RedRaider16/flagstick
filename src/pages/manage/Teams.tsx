@@ -12,12 +12,12 @@ export function Teams() {
   const { busy, error, setError, run } = useAction()
   const dialog = useReasonDialog()
   const [name, setName] = useState('')
-  const [a, setA] = useState('')
-  const [b, setB] = useState('')
+  const size = bundle.event.teamSize
+  const [picks, setPicks] = useState<string[]>([])
   const final = bundle.event.status === 'finalized'
 
-  if (bundle.round.format !== 'scramble_2')
-    return <Notice kind="info">Teams are used by the two-person scramble format. This event is individual stroke play.</Notice>
+  if (size < 2)
+    return <Notice kind="info">This event is individual stroke play, so it doesn't use teams. Change the event to a team format under Event &amp; course.</Notice>
 
   const onTeam = new Set(bundle.teams.flatMap((t) => t.playerIds))
   const free = bundle.players.filter((p) => !onTeam.has(p.id)).sort((x, y) => x.lastName.localeCompare(y.lastName))
@@ -28,11 +28,11 @@ export function Teams() {
     run(async () => {
       const list = [...free]
       let n = bundle.teams.length + 1
-      while (list.length >= 2) {
-        const [p1, p2] = [list.shift()!, list.shift()!]
-        let teamName = `${p1.lastName} / ${p2.lastName}`
+      while (list.length >= size) {
+        const members = list.splice(0, size)
+        let teamName = defaultTeamName(members)
         if (bundle.teams.some((t) => t.name === teamName)) teamName = `Team ${n}`
-        await repo.createTeam(bundle.event.id, teamName, [p1.id, p2.id])
+        await repo.createTeam(bundle.event.id, teamName, members.map((m) => m.id))
         n++
       }
       await reload()
@@ -46,31 +46,33 @@ export function Teams() {
         <form className="panel" onSubmit={(e) => {
           e.preventDefault()
           void run(async () => {
-            await repo.createTeam(bundle.event.id, name || `${byId(a)?.lastName ?? 'Team'} / ${byId(b)?.lastName ?? ''}`.trim(), [a, b].filter(Boolean))
+            const chosen = picks.filter(Boolean)
+            await repo.createTeam(bundle.event.id, name || defaultTeamName(chosen.map(byId).filter((x): x is Player => !!x)), chosen)
             setName('')
-            setA('')
-            setB('')
+            setPicks([])
             await reload()
           })
         }}>
           <h2>Create a team</h2>
-          <PlayerSelect id="t-a" label="Player 1" players={free} value={a} exclude={b} onChange={setA} />
-          <PlayerSelect id="t-b" label="Player 2" players={free} value={b} exclude={a} onChange={setB} />
+          {Array.from({ length: size }, (_, i) => (
+            <PlayerSelect key={i} id={`t-${i}`} label={`Player ${i + 1}`} players={free} value={picks[i] ?? ''} exclude={picks.filter((_, j) => j !== i)}
+              onChange={(v) => setPicks((x) => { const n = [...x]; n[i] = v; return n })} />
+          ))}
           <div className="field">
             <label htmlFor="t-name">Team name <span className="hint" style={{ display: 'inline' }}>(optional — defaults to last names)</span></label>
             <input id="t-name" type="text" maxLength={60} value={name} onChange={(e) => setName(e.target.value)} />
           </div>
-          <button className="btn primary" type="submit" disabled={busy || final || !a || !b}>Create team</button>
+          <button className="btn primary" type="submit" disabled={busy || final || picks.filter(Boolean).length < 1}>Create team</button>
         </form>
         <section className="panel">
           <h2>Players without a team</h2>
           {free.length === 0 ? <p className="muted">Everyone is on a team.</p> : (
             <>
               <p>{free.map(playerName).join(', ')}</p>
-              <button className="btn" type="button" disabled={busy || final || free.length < 2} onClick={() => void autoPair()}>
-                Pair them in alphabetical order
+              <button className="btn" type="button" disabled={busy || final || free.length < size} onClick={() => void autoPair()}>
+                Make teams of {size} in alphabetical order
               </button>
-              {free.length % 2 === 1 && <p className="small muted" style={{ marginTop: '.5rem' }}>There's an odd number of players; one will be left over.</p>}
+              {free.length % size !== 0 && <p className="small muted" style={{ marginTop: '.5rem' }}>{free.length % size} player{free.length % size === 1 ? '' : 's'} will be left over.</p>}
             </>
           )}
         </section>
@@ -83,7 +85,7 @@ export function Teams() {
               <thead><tr><th scope="col">Team</th><th scope="col">Players</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {teams.map((t) => (
-                  <TeamRow key={t.id} team={t} free={free} byId={byId} disabled={final || busy}
+                  <TeamRow key={t.id} team={t} size={size} free={free} byId={byId} disabled={final || busy}
                     onSave={(nm, ids) => run(async () => { await repo.updateTeam(t.id, bundle.event.id, nm, ids); await reload() })}
                     onDelete={async () => {
                       const ok = await dialog.ask({ title: `Delete ${t.name}?`, body: <p>Teams with scores can't be deleted — mark them WD instead.</p>, confirmLabel: 'Delete team', danger: true })
@@ -104,13 +106,15 @@ export function Teams() {
   )
 }
 
-function PlayerSelect(props: { id: string; label: string; players: Player[]; value: string; exclude?: string; onChange: (v: string) => void }) {
+const defaultTeamName = (ps: Player[]) => ps.map((x) => x.lastName).join(' / ') || 'Team'
+
+function PlayerSelect(props: { id: string; label: string; players: Player[]; value: string; exclude?: string[]; onChange: (v: string) => void }) {
   return (
     <div className="field">
       <label htmlFor={props.id}>{props.label}</label>
       <select id={props.id} value={props.value} onChange={(e) => props.onChange(e.target.value)}>
         <option value="">Choose a player</option>
-        {props.players.filter((p) => p.id !== props.exclude).map((p) => <option key={p.id} value={p.id}>{playerName(p)}</option>)}
+        {props.players.filter((p) => !props.exclude?.includes(p.id)).map((p) => <option key={p.id} value={p.id}>{playerName(p)}</option>)}
       </select>
     </div>
   )
@@ -118,6 +122,7 @@ function PlayerSelect(props: { id: string; label: string; players: Player[]; val
 
 function TeamRow(props: {
   team: Team
+  size: number
   free: Player[]
   byId: (id: string) => Player | undefined
   disabled: boolean
@@ -137,18 +142,18 @@ function TeamRow(props: {
         <td colSpan={4}>
           <div className="row">
             <input aria-label="Team name" type="text" value={name} onChange={(e) => setName(e.target.value)} style={{ width: 200 }} />
-            {[0, 1].map((i) => (
+            {Array.from({ length: props.size }, (_, i) => (
               <select key={i} aria-label={`Player ${i + 1}`} value={ids[i] ?? ''} style={{ width: 200 }}
                 onChange={(e) => {
                   const next = [...ids]
                   next[i] = e.target.value
-                  setIds(next.filter(Boolean))
+                  setIds(next)
                 }}>
                 <option value="">None</option>
                 {options.filter((p) => p.id === ids[i] || !ids.includes(p.id)).map((p) => <option key={p.id} value={p.id}>{playerName(p)}</option>)}
               </select>
             ))}
-            <button className="btn primary small" type="button" onClick={async () => { await props.onSave(name, ids); setEditing(false) }}>Save</button>
+            <button className="btn primary small" type="button" onClick={async () => { await props.onSave(name, ids.filter(Boolean)); setEditing(false) }}>Save</button>
             <button className="btn quiet small" type="button" onClick={() => setEditing(false)}>Cancel</button>
           </div>
         </td>
@@ -159,8 +164,8 @@ function TeamRow(props: {
     <tr>
       <td><strong>{team.name}</strong></td>
       <td>
-        {members.map(playerName).join(' and ') || <span className="muted">No players</span>}
-        {members.length !== 2 && <span className="badge wd" style={{ marginLeft: '.4rem' }}>Needs 2 players</span>}
+        {members.map(playerName).join(', ') || <span className="muted">No players</span>}
+        {members.length !== props.size && <span className="badge wd" style={{ marginLeft: '.4rem' }}>Needs {props.size} players</span>}
       </td>
       <td>{props.status}</td>
       <td className="n" style={{ whiteSpace: 'nowrap' }}>

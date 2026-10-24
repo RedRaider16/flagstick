@@ -4,7 +4,7 @@ import { useApp, usePath } from '../app/context'
 import { useTitle } from '../app/hooks'
 import { ErrorNote, Loading, Notice } from '../components/ui'
 import { errorMessage } from '../data/errors'
-import { formatDate } from '../domain/derive'
+import { eventDates, eventFormatText } from '../domain/derive'
 import {
   formatMoney,
   parseHandicapIndex,
@@ -54,7 +54,7 @@ export function Register() {
       if (!e) return setMissing(true)
       const b = await repo.loadBundle(e.id)
       setBundle(b)
-      setPeople(b.round.format === 'scramble_2' ? [blank(), blank()] : [blank()])
+      setPeople(Array.from({ length: b.event.teamSize }, blank))
     }, () => setMissing(true))
   }, [repo, code])
 
@@ -68,7 +68,8 @@ export function Register() {
   if (!bundle) return <Loading />
 
   const { event } = bundle
-  const isTeam = bundle.round.format === 'scramble_2'
+  const size = bundle.event.teamSize
+  const isTeam = size > 1
   const state = registrationState(bundle)
   const fee = event.registration.entryFeeCents
 
@@ -123,8 +124,13 @@ export function Register() {
       const h = parseHandicapIndex(x.handicapIndex)
       if (!h.ok) e[`${i}.handicapIndex`] = h.error
     })
-    if (isTeam && people[0]!.email.trim() && people[0]!.email.trim().toLowerCase() === people[1]!.email.trim().toLowerCase())
-      e['1.email'] = 'Each player needs their own email address.'
+    const seen = new Map<string, number>()
+    people.forEach((x, i) => {
+      const em = x.email.trim().toLowerCase()
+      if (!em) return
+      if (seen.has(em)) e[`${i}.email`] = 'Each player needs their own email address.'
+      else seen.set(em, i)
+    })
     return e
   }
 
@@ -157,11 +163,11 @@ export function Register() {
       <p className="small"><Link to={p(`e/${event.publicCode}`)}>{event.name}</Link></p>
       <h1>Register{isTeam ? ' your team' : ''}</h1>
       <p className="muted">
-        {formatDate(event.date)} at {bundle.course?.name ?? 'the course'}.{' '}
-        {isTeam ? 'Two-person scramble: sign up both players together.' : 'Individual stroke play.'}
+        {eventDates(bundle)} at {bundle.course?.name ?? 'the course'}.{' '}
+        {eventFormatText(bundle)}.{isTeam ? ` Sign up all ${size} players together.` : ''}
       </p>
       <dl className="reg-facts">
-        {fee !== null && (<><dt>Entry fee</dt><dd>{formatMoney(fee)} per player{isTeam ? ` (${formatMoney(fee * 2)} per team)` : ''}</dd></>)}
+        {fee !== null && (<><dt>Entry fee</dt><dd>{formatMoney(fee)} per player{isTeam ? ` (${formatMoney(fee * size)} per team)` : ''}</dd></>)}
         {event.registration.closesAt && (<><dt>Closes</dt><dd>{formatCloses(event.registration.closesAt, event.timezone)}</dd></>)}
         {state.spotsLeft !== null && (<><dt>Spots left</dt><dd>{state.spotsLeft === 0 ? 'None (waitlist)' : `${state.spotsLeft} player${state.spotsLeft === 1 ? '' : 's'}`}</dd></>)}
       </dl>
@@ -174,7 +180,7 @@ export function Register() {
           <ErrorNote error={submitError} />
           {people.map((x, i) => (
             <fieldset key={i} className="panel" style={{ padding: '1rem 1.1rem' }}>
-              <legend style={{ fontSize: '1.1rem' }}>{isTeam ? (i === 0 ? 'Player 1 (you)' : 'Player 2 (partner)') : 'Your details'}</legend>
+              <legend style={{ fontSize: '1.1rem' }}>{isTeam ? (i === 0 ? 'Player 1 (you)' : `Player ${i + 1}${size === 2 ? ' (partner)' : ''}`) : 'Your details'}</legend>
               <div className="grid-2" style={{ gap: '0 1rem' }}>
                 <Field id={`reg-${i}-firstName`} label="First name" error={errors[`${i}.firstName`]}>
                   <input id={`reg-${i}-firstName`} type="text" autoComplete={i === 0 ? 'given-name' : 'off'} maxLength={60} value={x.firstName} onChange={(e) => set(i, { firstName: e.target.value })} aria-invalid={!!errors[`${i}.firstName`]} />

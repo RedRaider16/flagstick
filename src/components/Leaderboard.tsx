@@ -1,19 +1,34 @@
 import { Fragment, useState } from 'react'
-import type { Hole } from '../domain/types'
 import { TIEBREAK_LABEL } from '../domain/types'
-import { formatThru, formatToPar, type Leaderboard as LB, type LbRow } from '../scoring/leaderboard'
+import type { EventLeaderboard, EvRow } from '../scoring/event'
+import { formatToPar } from '../scoring/leaderboard'
+
+export interface BoardRound {
+  id: string
+  label: string
+  /** Par for the counting score (best 2 balls on a par 4 = 8). */
+  holes: { number: number; par: number }[]
+}
+
+/** Player lines under a team's card (best-ball holes). */
+export type CardDetail = (entryId: string, roundId: string) => { name: string; scores: Map<number, number> }[]
 
 export function Leaderboard(props: {
-  lb: LB
-  holes: Hole[]
+  lb: EventLeaderboard
+  rounds: BoardRound[]
   title: string
   isTeam: boolean
   live?: boolean
   showGaps?: boolean
+  detail?: CardDetail
 }) {
-  const { lb, holes } = props
+  const { lb, rounds } = props
   const [open, setOpen] = useState<string | null>(null)
-  const ranked = lb.rows.filter((r) => r.holesPlayed > 0 || r.status !== 'active').length
+  const multi = rounds.length > 1
+  const cols = 5 + (multi ? rounds.length : 0)
+  const rows = lb.groups.flatMap((g) => g.rows)
+  const anyScores = rows.some((r) => r.holesPlayed > 0 || r.status !== 'active')
+  const split = lb.groups.length > 1 || lb.groups.some((g) => g.name)
 
   return (
     <section className="board" aria-label={props.title}>
@@ -26,7 +41,8 @@ export function Leaderboard(props: {
       <div className="table-wrap">
         <table>
           <caption className="sr-only">
-            {props.title}. {lb.final ? 'Final results.' : 'Provisional results; scores may change.'} Select a row to see the hole-by-hole card.
+            {props.title}. {lb.final ? 'Final results.' : 'Provisional results; scores may change.'}
+            {split ? ' Positions are ranked within each flight.' : ''} Select a row to see the hole-by-hole card.
           </caption>
           <thead>
             <tr>
@@ -34,94 +50,112 @@ export function Leaderboard(props: {
               <th scope="col">{props.isTeam ? 'Team' : 'Player'}</th>
               <th scope="col" className="n">To par</th>
               <th scope="col" className="n">Thru</th>
-              <th scope="col" className="n gross">Gross</th>
+              {multi && rounds.map((r) => <th key={r.id} scope="col" className="n gross">{r.label.replace('Round ', 'R')}</th>)}
+              <th scope="col" className="n gross">{multi ? 'Total' : 'Gross'}</th>
             </tr>
           </thead>
-          <tbody>
-            {lb.rows.length === 0 && (
+          {rows.length === 0 && (
+            <tbody>
               <tr>
-                <td colSpan={5} className="muted">No {props.isTeam ? 'teams' : 'players'} yet.</td>
+                <td colSpan={cols} className="muted">No {props.isTeam ? 'teams' : 'players'} yet.</td>
               </tr>
-            )}
-            {lb.rows.map((r) => (
-              <Fragment key={r.entryId}>
-                <tr
-                  className={`row-btn ${r.status !== 'active' ? 'out' : ''}`}
-                  onClick={() => setOpen(open === r.entryId ? null : r.entryId)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      setOpen(open === r.entryId ? null : r.entryId)
-                    }
-                  }}
-                  tabIndex={0}
-                  aria-expanded={open === r.entryId}
-                >
-                  <td className="pos">{r.positionLabel}</td>
-                  <td className="who">
-                    {r.name}
-                    {r.tiebreakNote && <small>{r.tiebreakNote}</small>}
-                    {props.showGaps && r.gaps.length > 0 && <small className="flag-gap">Missing hole {r.gaps.join(', ')}</small>}
-                  </td>
-                  <td className={`topar ${r.toPar !== null && r.toPar < 0 && r.status === 'active' ? 'under' : ''}`}>
-                    {r.status === 'dq' ? '—' : formatToPar(r.toPar)}
-                  </td>
-                  <td className="thru">{formatThru(r)}</td>
-                  <td className="gross">{r.gross ?? '—'}</td>
+            </tbody>
+          )}
+          {lb.groups.map((g) => (
+            <tbody key={g.flightId ?? g.name}>
+              {split && g.rows.length > 0 && (
+                <tr className="flight-row">
+                  <th colSpan={cols} scope="colgroup">{g.name}</th>
                 </tr>
-                {open === r.entryId && (
-                  <tr>
-                    <td colSpan={5} style={{ background: '#fafbfa' }}>
-                      <HoleStrip row={r} holes={holes} />
+              )}
+              {g.rows.map((r) => (
+                <Fragment key={r.entryId}>
+                  <tr
+                    className={`row-btn ${r.status !== 'active' ? 'out' : ''}`}
+                    onClick={() => setOpen(open === r.entryId ? null : r.entryId)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setOpen(open === r.entryId ? null : r.entryId)
+                      }
+                    }}
+                    tabIndex={0}
+                    aria-expanded={open === r.entryId}
+                  >
+                    <td className="pos">{r.positionLabel}</td>
+                    <td className="who">
+                      {r.name}
+                      {r.tiebreakNote && <small>{r.tiebreakNote}</small>}
+                      {props.showGaps && r.rounds.some((c) => c.gaps.length > 0) && (
+                        <small className="flag-gap">
+                          Missing {r.rounds.map((c, i) => (c.gaps.length ? `${multi ? `R${i + 1} ` : ''}hole ${c.gaps.join(', ')}` : '')).filter(Boolean).join('; ')}
+                        </small>
+                      )}
                     </td>
+                    <td className={`topar ${r.toPar !== null && r.toPar < 0 && r.status === 'active' ? 'under' : ''}`}>
+                      {r.status === 'active' ? formatToPar(r.toPar) : '—'}
+                    </td>
+                    <td className="thru">{r.status === 'active' ? r.thru : ''}</td>
+                    {multi && r.rounds.map((c) => <td key={c.roundId} className="gross">{c.complete ? c.gross : c.holesPlayed ? <span className="muted">{c.gross}</span> : '—'}</td>)}
+                    <td className="gross">{r.gross ?? '—'}</td>
                   </tr>
-                )}
-              </Fragment>
-            ))}
-          </tbody>
+                  {open === r.entryId && (
+                    <tr>
+                      <td colSpan={cols} style={{ background: 'var(--page)' }}>
+                        {rounds.map((rd, i) => (
+                          <div key={rd.id}>
+                            {multi && <div className="small" style={{ fontWeight: 600, margin: '.3rem 0' }}>{rd.label}</div>}
+                            <HoleStrip row={r} roundIndex={i} holes={rd.holes} players={nonEmpty(props.detail?.(r.entryId, rd.id))} />
+                          </div>
+                        ))}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          ))}
         </table>
       </div>
       <div className="board-foot">
         <div>
           Tie-break: {TIEBREAK_LABEL[lb.tiebreak]}.
-          {lb.unresolvedTies.length > 0 && ' Some ties could not be separated and stand as ties.'}
+          {lb.groups.some((g) => g.unresolvedTies.length > 0) && ' Some ties could not be separated and stand as ties.'}
         </div>
         <div>
-          Thru shows holes completed; F = finished; * = started on a hole other than 1. {ranked === 0 && 'No scores yet.'}
+          Thru shows holes completed; F = finished; * = started on a hole other than 1. WD, DQ, DNF and NS are unranked.
+          {!anyScores && ' No scores yet.'}
         </div>
       </div>
     </section>
   )
 }
 
-export function HoleStrip({ row, holes }: { row: LbRow; holes: Hole[] }) {
+const nonEmpty = <T,>(xs: T[] | undefined) => (xs && xs.length ? xs : undefined)
+
+export function HoleStrip({ row, roundIndex = 0, holes, players }: {
+  row: EvRow
+  roundIndex?: number
+  holes: { number: number; par: number }[]
+  players?: { name: string; scores: Map<number, number> }[]
+}) {
+  const card = row.rounds[roundIndex]?.holeScores ?? new Map<number, number>()
   const half = (from: number) => {
     const hs = holes.filter((h) => h.number >= from && h.number < from + 9)
-    let tot = 0
-    let count = 0
-    return (
-      <div className="card-strip" role="table" aria-label={from === 1 ? 'Front nine' : 'Back nine'}>
-        <div role="row" style={{ display: 'contents' }}>
-          {hs.map((h) => (
-            <div key={h.number} className="h" role="columnheader">{h.number}</div>
-          ))}
-          <div className="h tot" role="columnheader">{from === 1 ? 'Out' : 'In'}</div>
-        </div>
-        <div role="row" style={{ display: 'contents' }}>
-          {hs.map((h) => (
-            <div key={h.number} className="p" role="cell">{h.par}</div>
-          ))}
-          <div className="p tot" role="cell">{hs.reduce((s, h) => s + h.par, 0)}</div>
-        </div>
-        <div role="row" style={{ display: 'contents' }}>
+    const line = (label: string, get: (n: number) => number | undefined, cls: (v: number, par: number) => string, key: string) => {
+      let tot = 0
+      let count = 0
+      return (
+        <div role="row" style={{ display: 'contents' }} key={key}>
+          {players && <div className="nm" role="rowheader">{label}</div>}
           {hs.map((h) => {
-            const v = row.holeScores.get(h.number)
+            const v = get(h.number)
             if (v !== undefined) {
               tot += v
               count++
             }
             return (
-              <div key={h.number} role="cell" className={v === undefined ? 'sc-missing' : v < h.par ? 'sc-under' : ''}>
+              <div key={h.number} role="cell" className={v === undefined ? 'sc-missing' : cls(v, h.par)}>
                 {v ?? '·'}
                 {v === undefined && <span className="sr-only">no score</span>}
               </div>
@@ -129,6 +163,22 @@ export function HoleStrip({ row, holes }: { row: LbRow; holes: Hole[] }) {
           })}
           <div className="tot" role="cell">{count ? tot : '—'}</div>
         </div>
+      )
+    }
+    return (
+      <div className={`card-strip ${players ? 'with-names' : ''}`} role="table" aria-label={from === 1 ? 'Front nine' : 'Back nine'}>
+        <div role="row" style={{ display: 'contents' }}>
+          {players && <div className="h nm" role="columnheader">Hole</div>}
+          {hs.map((h) => <div key={h.number} className="h" role="columnheader">{h.number}</div>)}
+          <div className="h tot" role="columnheader">{from === 1 ? 'Out' : 'In'}</div>
+        </div>
+        <div role="row" style={{ display: 'contents' }}>
+          {players && <div className="p nm" role="rowheader">Par</div>}
+          {hs.map((h) => <div key={h.number} className="p" role="cell">{h.par}</div>)}
+          <div className="p tot" role="cell">{hs.reduce((s, h) => s + h.par, 0)}</div>
+        </div>
+        {players?.map((p, i) => line(p.name, (n) => p.scores.get(n), () => 'sc-player', `p${i}`))}
+        {line(players ? 'Counts' : '', (n) => card.get(n), (v, par) => (v < par ? 'sc-under' : ''), 'team')}
       </div>
     )
   }

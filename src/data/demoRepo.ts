@@ -3,6 +3,7 @@
 // group assignment, version conflicts) so the demo behaves like the real thing.
 import {
   NO_REGISTRATION,
+  type Entry,
   type EntryStatus,
   type EventBundle,
   type EventStatus,
@@ -16,12 +17,13 @@ import {
   type Score,
   type StaffRole,
 } from '../domain/types'
+import { defaultSegments, segmentFor, segmentsProblem } from '../scoring/formats'
 import { validateHoleLayout, type HoleInput } from '../scoring/validation'
 import { AppError } from './errors'
 import { buildDemoState, DEMO_USER, type DemoState } from './demoSeed'
-import type { Access, CourseDetail, GroupInput, NewEventInput, PlayerInput, Repo, SessionUser } from './repo'
+import type { Access, CourseDetail, EventPatch, GroupInput, NewEventInput, PlayerInput, Repo, RoundPatch, ScoreSlot, SessionUser } from './repo'
 
-const KEY = 'flagstick-demo-v2'
+const KEY = 'flagstick-demo-v3'
 const CHANNEL = 'flagstick-demo'
 
 const uid = () => (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2))
@@ -33,7 +35,7 @@ function loadState(): DemoState {
     const raw = localStorage.getItem(KEY)
     if (raw) {
       const s = JSON.parse(raw) as DemoState
-      if (s.schema === 2) return s
+      if (s.schema === 3) return s
     }
   } catch {
     /* storage unavailable or corrupt — fall back to a fresh demo */
@@ -105,9 +107,8 @@ export class DemoRepo implements Repo {
   private scorekeeperGroups(eventId: string): string[] {
     const st = this.s.staff.find((x) => x.eventId === eventId && x.role === 'scorekeeper')
     if (st) return st.groupIds
-    const round = this.s.rounds.find((r) => r.eventId === eventId)
-    const first = this.s.groups.filter((g) => g.roundId === round?.id).sort((a, b) => a.name.localeCompare(b.name))[0]
-    return first ? [first.id] : []
+    const rounds = this.s.rounds.filter((r) => r.eventId === eventId).map((r) => r.id)
+    return this.s.groups.filter((g) => rounds.includes(g.roundId)).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 1).map((g) => g.id)
   }
 
   // ── Session ──
@@ -194,13 +195,15 @@ export class DemoRepo implements Repo {
     let code: string
     do code = Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('')
     while (this.s.events.some((e) => e.publicCode === code))
+    const problem = segmentsProblem(input.segments, input.teamSize)
+    if (problem) throw new AppError(problem, 'conflict')
     const id = uid()
     this.s.events.push({
       id, publicCode: code, name: input.name.trim(), courseId: input.courseId, date: input.date, timezone: input.timezone,
       description: input.description, status: 'draft', tiebreakPolicy: input.tiebreak, createdAt: nowIso(),
-      registration: { ...NO_REGISTRATION },
+      registration: { ...NO_REGISTRATION }, teamSize: input.teamSize, cumulative: true, isTemplate: false,
     })
-    this.s.rounds.push({ id: uid(), eventId: id, roundNumber: 1, date: input.date, teeId: input.teeId, format: input.format, startType: input.startType, status: 'open' })
+    this.s.rounds.push({ id: uid(), eventId: id, roundNumber: 1, date: input.date, teeId: input.teeId, segments: input.segments, useFlights: true, startType: input.startType, status: 'open' })
     this.s.staff.push({ id: uid(), eventId: id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
     this.log(id, 'event_created', input.name)
     this.commit()
@@ -211,28 +214,52 @@ export class DemoRepo implements Repo {
     const event = this.event(eventId)
     const access = await this.access(eventId)
     if (event.status === 'draft' && !access.role) throw new AppError('This event is not published yet.', 'not_found')
-    const round = this.s.rounds.find((r) => r.eventId === eventId)!
+    const rounds = this.s.rounds.filter((r) => r.eventId === eventId).sort((a, b) => a.roundNumber - b.roundNumber)
+    const roundIds = new Set(rounds.map((r) => r.id))
     const course = this.s.courses.find((c) => c.id === event.courseId)
-    const tee = this.s.tees.find((t) => t.id === round.teeId) ?? null
+    const tees = this.s.tees.filter((t) => t.courseId === event.courseId)
+    const teeIds = new Set(tees.map((t) => t.id))
     return clone({
       event,
       course: course ? { id: course.id, name: course.name, city: course.city } : null,
-      tee,
-      holes: this.s.holes.filter((h) => h.teeId === round.teeId).sort((a, b) => a.number - b.number),
-      round,
+      tees,
+      holes: this.s.holes.filter((h) => teeIds.has(h.teeId)).sort((a, b) => a.number - b.number),
+      rounds,
+      flights: this.s.flights.filter((f) => f.eventId === eventId).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
       players: this.s.players.filter((p) => p.eventId === eventId),
       teams: this.s.teams.filter((t) => t.eventId === eventId),
       entries: this.s.entries.filter((e) => e.eventId === eventId),
-      groups: this.s.groups.filter((g) => g.roundId === round.id),
-      scores: this.s.scores.filter((s) => s.roundId === round.id),
+      groups: this.s.groups.filter((g) => roundIds.has(g.roundId)),
+      scores: this.s.scores.filter((s) => roundIds.has(s.roundId)),
     })
   }
 
-  async updateEvent(eventId: string, patch: Partial<Pick<GolfEvent, 'name' | 'date' | 'timezone' | 'description' | 'tiebreakPolicy'>>) {
+  async updateEvent(eventId: string, patch: EventPatch) {
     this.requireAdmin(eventId)
-    Object.assign(this.event(eventId), patch)
-    if (patch.date) this.s.rounds.filter((r) => r.eventId === eventId).forEach((r) => (r.date = patch.date!))
+    const ev = this.event(eventId)
+    if (patch.isTemplate && ev.status !== 'draft') throw new AppError('Only a draft can be a template.', 'conflict')
+    if (patch.teamSize !== undefined && patch.teamSize !== ev.teamSize) this.changeTeamSize(eventId, patch.teamSize)
+    Object.assign(ev, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)))
     this.commit()
+  }
+
+  private hasScores(eventId: string) {
+    const rounds = new Set(this.s.rounds.filter((r) => r.eventId === eventId).map((r) => r.id))
+    return this.s.scores.some((s) => rounds.has(s.roundId))
+  }
+  private newEntry(eventId: string, kind: 'player' | 'team', id: string): Entry {
+    return { id: uid(), eventId, kind, playerId: kind === 'player' ? id : null, teamId: kind === 'team' ? id : null, status: 'active', statusNote: '', flightId: null }
+  }
+  private changeTeamSize(eventId: string, size: number) {
+    if (this.hasScores(eventId)) throw new AppError("The team size can't change after scores have been entered.", 'conflict')
+    if (size > 1 && this.s.teams.some((t) => t.eventId === eventId && t.playerIds.length > size))
+      throw new AppError(`Some teams have more than ${size} players. Change those teams first.`, 'conflict')
+    for (const r of this.s.rounds.filter((x) => x.eventId === eventId)) if (segmentsProblem(r.segments, size)) r.segments = defaultSegments(size)
+    const removed = new Set(this.s.entries.filter((e) => e.eventId === eventId).map((e) => e.id))
+    this.s.entries = this.s.entries.filter((e) => !removed.has(e.id))
+    this.s.groups.forEach((g) => (g.entryIds = g.entryIds.filter((id) => !removed.has(id))))
+    if (size === 1) for (const p of this.s.players.filter((x) => x.eventId === eventId)) this.s.entries.push(this.newEntry(eventId, 'player', p.id))
+    else for (const t of this.s.teams.filter((x) => x.eventId === eventId)) this.s.entries.push(this.newEntry(eventId, 'team', t.id))
   }
 
   async updateRegistrationSettings(eventId: string, r: RegistrationSettings) {
@@ -243,23 +270,110 @@ export class DemoRepo implements Repo {
     this.commit()
   }
 
-  async updateRound(roundId: string, patch: { teeId?: string | null; format?: 'stroke_individual' | 'scramble_2'; startType?: 'tee_times' | 'shotgun' }) {
+  async updateRound(roundId: string, patch: RoundPatch) {
     const round = this.s.rounds.find((r) => r.id === roundId)
     if (!round) throw new AppError('Round not found.', 'not_found')
     this.requireAdmin(round.eventId)
-    if (patch.format && patch.format !== round.format) {
-      if (this.s.scores.some((s) => s.roundId === roundId)) throw new AppError("The format can't change after scores have been entered.", 'conflict')
-      const removed = new Set(this.s.entries.filter((e) => e.eventId === round.eventId).map((e) => e.id))
-      this.s.entries = this.s.entries.filter((e) => !removed.has(e.id))
-      this.s.groups.forEach((g) => (g.entryIds = g.entryIds.filter((id) => !removed.has(id))))
-      if (patch.format === 'stroke_individual')
-        for (const p of this.s.players.filter((x) => x.eventId === round.eventId))
-          this.s.entries.push({ id: uid(), eventId: round.eventId, kind: 'player', playerId: p.id, teamId: null, status: 'active', statusNote: '' })
-      else
-        for (const t of this.s.teams.filter((x) => x.eventId === round.eventId))
-          this.s.entries.push({ id: uid(), eventId: round.eventId, kind: 'team', playerId: null, teamId: t.id, status: 'active', statusNote: '' })
+    if (patch.segments) {
+      const problem = segmentsProblem(patch.segments, this.event(round.eventId).teamSize)
+      if (problem) throw new AppError(problem, 'conflict')
+      if (JSON.stringify(patch.segments) !== JSON.stringify(round.segments) && this.s.scores.some((s) => s.roundId === roundId))
+        throw new AppError("The format can't change after scores have been entered.", 'conflict')
     }
     Object.assign(round, Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)))
+    this.commit()
+  }
+  async addRound(eventId: string) {
+    this.requireAdmin(eventId)
+    const rounds = this.s.rounds.filter((r) => r.eventId === eventId).sort((a, b) => a.roundNumber - b.roundNumber)
+    const last = rounds[rounds.length - 1]!
+    if (last.roundNumber >= 6) throw new AppError('An event can have at most 6 rounds.', 'conflict')
+    const d = new Date(`${last.date}T12:00:00Z`)
+    d.setUTCDate(d.getUTCDate() + 1)
+    const id = uid()
+    this.s.rounds.push({ ...clone(last), id, roundNumber: last.roundNumber + 1, date: d.toISOString().slice(0, 10), status: 'open' })
+    this.log(eventId, 'round_added', `Round ${last.roundNumber + 1}`)
+    this.commit()
+    return id
+  }
+  async deleteRound(roundId: string) {
+    const r = this.s.rounds.find((x) => x.id === roundId)
+    if (!r) return
+    this.requireAdmin(r.eventId)
+    const rest = this.s.rounds.filter((x) => x.eventId === r.eventId && x.id !== roundId)
+    if (!rest.length) throw new AppError('An event needs at least one round.', 'conflict')
+    if (this.s.scores.some((s) => s.roundId === roundId)) throw new AppError("This round has scores and can't be removed.", 'conflict')
+    const groups = new Set(this.s.groups.filter((g) => g.roundId === roundId).map((g) => g.id))
+    this.s.groups = this.s.groups.filter((g) => !groups.has(g.id))
+    this.s.rounds = this.s.rounds.filter((x) => x.id !== roundId)
+    rest.sort((a, b) => a.roundNumber - b.roundNumber).forEach((x, i) => (x.roundNumber = i + 1))
+    this.log(r.eventId, 'round_removed', `Round ${r.roundNumber}`)
+    this.commit()
+  }
+  async duplicateEvent(eventId: string, name: string, date: string, asTemplate: boolean) {
+    this.requireAdmin(eventId)
+    if (!name.trim() || !date) throw new AppError('Give the new event a name and a date.', 'invalid')
+    const src = this.event(eventId)
+    const shiftDays = Math.round((Date.parse(`${date}T12:00:00Z`) - Date.parse(`${src.date}T12:00:00Z`)) / 864e5)
+    const shift = (iso: string) => {
+      const d = new Date(`${iso}T12:00:00Z`)
+      d.setUTCDate(d.getUTCDate() + shiftDays)
+      return d.toISOString().slice(0, 10)
+    }
+    let code: string
+    do code = Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('')
+    while (this.s.events.some((e) => e.publicCode === code))
+    const id = uid()
+    const closes = src.registration.closesAt ? new Date(Date.parse(src.registration.closesAt) + shiftDays * 864e5).toISOString() : null
+    this.s.events.push({
+      ...clone(src), id, publicCode: code, name: name.trim(), date, status: 'draft', createdAt: nowIso(), isTemplate: asTemplate,
+      registration: { ...src.registration, open: false, closesAt: closes },
+    })
+    for (const r of this.s.rounds.filter((x) => x.eventId === eventId))
+      this.s.rounds.push({ ...clone(r), id: uid(), eventId: id, date: shift(r.date), status: 'open' })
+    for (const f of this.s.flights.filter((x) => x.eventId === eventId)) this.s.flights.push({ ...f, id: uid(), eventId: id })
+    this.s.staff.push({ id: uid(), eventId: id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
+    this.log(id, 'event_created', `Copied from ${src.name}`)
+    this.commit()
+    return id
+  }
+
+  // ── Flights ──
+  async createFlight(eventId: string, name: string, sortOrder: number) {
+    this.requireAdmin(eventId)
+    if (!name.trim()) throw new AppError('Flight name is required.', 'invalid')
+    if (this.s.flights.some((f) => f.eventId === eventId && f.name.toLowerCase() === name.trim().toLowerCase()))
+      throw new AppError('That flight already exists.', 'conflict')
+    const id = uid()
+    this.s.flights.push({ id, eventId, name: name.trim(), sortOrder })
+    this.commit()
+    return id
+  }
+  async updateFlight(flightId: string, name: string, sortOrder: number) {
+    const f = this.s.flights.find((x) => x.id === flightId)
+    if (!f) throw new AppError('Flight not found.', 'not_found')
+    this.requireAdmin(f.eventId)
+    f.name = name.trim() || f.name
+    f.sortOrder = sortOrder
+    this.commit()
+  }
+  async deleteFlight(flightId: string) {
+    const f = this.s.flights.find((x) => x.id === flightId)
+    if (!f) return
+    this.requireAdmin(f.eventId)
+    this.s.flights = this.s.flights.filter((x) => x.id !== flightId)
+    this.s.entries.forEach((e) => e.flightId === flightId && (e.flightId = null))
+    this.commit()
+  }
+  async setEntryFlights(eventId: string, assignments: { entryId: string; flightId: string | null }[]) {
+    this.requireAdmin(eventId)
+    if (this.event(eventId).status === 'finalized') throw new AppError('Results are final. Reopen a round first.', 'conflict')
+    for (const a of assignments) {
+      if (a.flightId && !this.s.flights.some((f) => f.id === a.flightId && f.eventId === eventId)) throw new AppError('Unknown flight.', 'conflict')
+      const e = this.s.entries.find((x) => x.id === a.entryId && x.eventId === eventId)
+      if (e) e.flightId = a.flightId
+    }
+    this.log(eventId, 'flights_assigned', `${assignments.length} entries`)
     this.commit()
   }
 
@@ -273,23 +387,23 @@ export class DemoRepo implements Repo {
     this.s.teams = this.s.teams.filter((x) => x.eventId !== eventId)
     this.s.entries = this.s.entries.filter((x) => x.eventId !== eventId)
     this.s.groups = this.s.groups.filter((x) => !roundIds.has(x.roundId))
+    this.s.flights = this.s.flights.filter((x) => x.eventId !== eventId)
     this.s.staff = this.s.staff.filter((x) => x.eventId !== eventId)
     this.commit()
   }
 
   // ── Roster ──
-  private format(eventId: string) {
-    return this.s.rounds.find((r) => r.eventId === eventId)!.format
+  private teamSize(eventId: string) {
+    return this.event(eventId).teamSize
   }
 
   async addPlayer(eventId: string, p: PlayerInput) {
     this.requireAdmin(eventId)
     if (!p.firstName.trim() || !p.lastName.trim()) throw new AppError('First and last name are required.', 'invalid')
     const id = uid()
-    this.s.players.push({ id, eventId, firstName: p.firstName.trim(), lastName: p.lastName.trim() })
+    this.s.players.push({ id, eventId, firstName: p.firstName.trim(), lastName: p.lastName.trim(), teeId: null })
     this.s.contacts.push({ playerId: id, email: p.email.trim(), phone: p.phone.trim() })
-    if (this.format(eventId) === 'stroke_individual')
-      this.s.entries.push({ id: uid(), eventId, kind: 'player', playerId: id, teamId: null, status: 'active', statusNote: '' })
+    if (this.teamSize(eventId) === 1) this.s.entries.push(this.newEntry(eventId, 'player', id))
     this.commit()
     return id
   }
@@ -320,14 +434,24 @@ export class DemoRepo implements Repo {
     this.s.groups.forEach((g) => (g.entryIds = g.entryIds.filter((id) => !own.includes(id))))
     this.commit()
   }
+  async setPlayerTee(playerId: string, teeId: string | null) {
+    const pl = this.s.players.find((x) => x.id === playerId)
+    if (!pl) throw new AppError('Player not found.', 'not_found')
+    this.requireAdmin(pl.eventId)
+    if (teeId && !this.s.tees.some((t) => t.id === teeId && t.courseId === this.event(pl.eventId).courseId))
+      throw new AppError("That tee isn't on this event's course.", 'conflict')
+    pl.teeId = teeId
+    this.commit()
+  }
   async listContacts(eventId: string) {
     if (!this.isAdmin(eventId)) return []
     const ids = new Set(this.s.players.filter((p) => p.eventId === eventId).map((p) => p.id))
     return clone(this.s.contacts.filter((c) => ids.has(c.playerId)))
   }
   private checkTeamMembers(eventId: string, teamId: string | null, playerIds: string[]) {
-    if (playerIds.length > 2) throw new AppError('A scramble team can have at most two players.', 'invalid')
-    if (new Set(playerIds).size !== playerIds.length) throw new AppError('Pick two different players.', 'invalid')
+    const size = this.teamSize(eventId)
+    if (playerIds.length > size) throw new AppError(`A team in this event can have at most ${size} players.`, 'invalid')
+    if (new Set(playerIds).size !== playerIds.length) throw new AppError('Pick different players.', 'invalid')
     for (const pid of playerIds) {
       const other = this.s.teams.find((t) => t.eventId === eventId && t.id !== teamId && t.playerIds.includes(pid))
       if (other) throw new AppError(`That player is already on ${other.name}.`, 'conflict')
@@ -341,8 +465,7 @@ export class DemoRepo implements Repo {
     this.checkTeamMembers(eventId, null, playerIds)
     const id = uid()
     this.s.teams.push({ id, eventId, name: name.trim(), playerIds })
-    if (this.format(eventId) === 'scramble_2')
-      this.s.entries.push({ id: uid(), eventId, kind: 'team', playerId: null, teamId: id, status: 'active', statusNote: '' })
+    if (this.teamSize(eventId) > 1) this.s.entries.push(this.newEntry(eventId, 'team', id))
     this.commit()
     return id
   }
@@ -373,8 +496,7 @@ export class DemoRepo implements Repo {
     const e = this.s.entries.find((x) => x.id === entryId)
     if (!e) throw new AppError('Entry not found.', 'not_found')
     this.requireAdmin(e.eventId)
-    if (this.s.rounds.some((r) => r.eventId === e.eventId && r.status === 'finalized'))
-      throw new AppError('Results are final. Reopen the round first.', 'conflict')
+    if (this.event(e.eventId).status === 'finalized') throw new AppError('Results are final. Reopen a round first.', 'conflict')
     this.log(e.eventId, `entry_status:${e.status}->${status}`, `${entryId} ${note}`.trim())
     e.status = status
     e.statusNote = note
@@ -389,30 +511,29 @@ export class DemoRepo implements Repo {
     return ref
   }
   private confirmInternal(reg: Registration) {
-    const format = this.format(reg.eventId)
+    const teamEvent = this.teamSize(reg.eventId) > 1
     const ids: string[] = []
     for (const person of reg.people) {
       const id = uid()
-      this.s.players.push({ id, eventId: reg.eventId, firstName: person.firstName, lastName: person.lastName })
+      this.s.players.push({ id, eventId: reg.eventId, firstName: person.firstName, lastName: person.lastName, teeId: null })
       this.s.contacts.push({ playerId: id, email: person.email, phone: person.phone })
       if (person.handicapIndex !== null)
         this.s.handicaps.push({
           playerId: id, handicapIndex: person.handicapIndex,
           source: reg.source === 'online' ? 'Self-reported at registration' : 'Entered by admin', asOf: reg.createdAt.slice(0, 10),
         })
-      if (format === 'stroke_individual')
-        this.s.entries.push({ id: uid(), eventId: reg.eventId, kind: 'player', playerId: id, teamId: null, status: 'active', statusNote: '' })
+      if (!teamEvent) this.s.entries.push(this.newEntry(reg.eventId, 'player', id))
       person.playerId = id
       ids.push(id)
     }
-    if (format === 'scramble_2') {
+    if (teamEvent) {
       const base = reg.teamName.trim() || reg.people.map((x) => x.lastName).join(' / ')
       let name = base
       let n = 1
       while (this.s.teams.some((t) => t.eventId === reg.eventId && t.name.toLowerCase() === name.toLowerCase())) name = `${base.slice(0, 54)} (${++n})`
       const teamId = uid()
       this.s.teams.push({ id: teamId, eventId: reg.eventId, name, playerIds: ids })
-      this.s.entries.push({ id: uid(), eventId: reg.eventId, kind: 'team', playerId: null, teamId, status: 'active', statusNote: '' })
+      this.s.entries.push(this.newEntry(reg.eventId, 'team', teamId))
       reg.teamId = teamId
     }
     reg.status = 'confirmed'
@@ -424,8 +545,8 @@ export class DemoRepo implements Repo {
     const r = ev.registration
     if (!r.open) throw new AppError('Registration for this event is closed.', 'conflict')
     if (r.closesAt && Date.now() >= Date.parse(r.closesAt)) throw new AppError('Registration for this event has closed.', 'conflict')
-    const size = this.format(ev.id) === 'scramble_2' ? 2 : 1
-    if (people.length !== size) throw new AppError(size === 2 ? 'This is a two-person team event. Enter both players.' : 'Register one player at a time.', 'invalid')
+    const size = ev.teamSize
+    if (people.length !== size) throw new AppError(size === 1 ? 'Register one player at a time.' : `This is a ${size}-person team event. Enter all ${size} players.`, 'invalid')
     const emails: string[] = []
     people.forEach((x, i) => {
       if (!x.firstName.trim() || !x.lastName.trim()) throw new AppError(`Player ${i + 1}: first and last name are required.`, 'invalid')
@@ -584,16 +705,23 @@ export class DemoRepo implements Repo {
 
   // ── Status ──
   async startBlockers(eventId: string) {
-    const round = this.s.rounds.find((r) => r.eventId === eventId)!
+    const ev = this.event(eventId)
+    const rounds = this.s.rounds.filter((r) => r.eventId === eventId).sort((a, b) => a.roundNumber - b.roundNumber)
     const problems: string[] = []
-    if (!round.teeId) problems.push('Choose a tee for the round.')
-    else {
-      const n = this.s.holes.filter((h) => h.teeId === round.teeId).length
-      if (n !== 18) problems.push(`The tee has ${n} of 18 holes set up.`)
+    let min = 2
+    for (const round of rounds) {
+      if (!round.teeId) problems.push(`Choose a tee for round ${round.roundNumber}.`)
+      else {
+        const n = this.s.holes.filter((h) => h.teeId === round.teeId).length
+        if (n !== 18) problems.push(`Round ${round.roundNumber}'s tee has ${n} of 18 holes set up.`)
+      }
+      for (const sg of round.segments) if (sg.method === 'best_ball') min = Math.max(min, sg.count)
     }
-    if (!this.s.entries.some((e) => e.eventId === eventId)) problems.push(`Add at least one ${round.format === 'scramble_2' ? 'team' : 'player'}.`)
-    if (round.format === 'scramble_2' && this.s.teams.some((t) => t.eventId === eventId && t.playerIds.length !== 2))
-      problems.push('Every scramble team needs exactly two players.')
+    if (this.s.players.some((p) => p.eventId === eventId && p.teeId && this.s.holes.filter((h) => h.teeId === p.teeId).length !== 18))
+      problems.push("A player's tee doesn't have all 18 holes set up.")
+    if (!this.s.entries.some((e) => e.eventId === eventId)) problems.push(ev.teamSize === 1 ? 'Add at least one player.' : 'Add at least one team.')
+    if (ev.teamSize > 1 && this.s.teams.some((t) => t.eventId === eventId && t.playerIds.length < min))
+      problems.push(`Every team needs at least ${min} players.`)
     return problems
   }
   async setEventStatus(eventId: string, status: EventStatus, reason: string) {
@@ -601,6 +729,7 @@ export class DemoRepo implements Repo {
     const ev = this.event(eventId)
     const from = ev.status
     if (from === status) return
+    if (ev.isTemplate) throw new AppError("This is a template. Create this year's event from it, then publish that.", 'conflict')
     const ok =
       (from === 'draft' && status === 'published') ||
       (from === 'published' && (status === 'draft' || status === 'in_progress')) ||
@@ -628,13 +757,11 @@ export class DemoRepo implements Repo {
     this.requireAdmin(r.eventId)
     if (r.status === 'finalized') return
     if (this.event(r.eventId).status !== 'in_progress') throw new AppError('Start the event before finalizing.', 'conflict')
-    const incomplete = this.s.entries.filter(
-      (e) => e.eventId === r.eventId && e.status === 'active' && this.s.scores.filter((s) => s.roundId === roundId && s.entryId === e.id).length < 18,
-    ).length
-    if (incomplete) throw new AppError(`${incomplete} active ${incomplete === 1 ? 'entry is' : 'entries are'} not complete. Finish their cards or mark them WD/DQ.`, 'conflict')
+    const incomplete = this.s.entries.filter((e) => e.eventId === r.eventId && e.status === 'active' && this.holesDone(r.id, e.id) < 18).length
+    if (incomplete) throw new AppError(`${incomplete} active ${incomplete === 1 ? 'entry is' : 'entries are'} not complete. Finish their cards or mark them WD, DNF or NS.`, 'conflict')
     r.status = 'finalized'
-    this.event(r.eventId).status = 'finalized'
-    this.log(r.eventId, 'finalized', reason)
+    if (this.s.rounds.every((x) => x.eventId !== r.eventId || x.status === 'finalized')) this.event(r.eventId).status = 'finalized'
+    this.log(r.eventId, 'finalized', `Round ${r.roundNumber}${reason.trim() ? `. ${reason.trim()}` : ''}`)
     this.commit()
   }
   async reopenRound(roundId: string, reason: string) {
@@ -644,7 +771,7 @@ export class DemoRepo implements Repo {
     if (!reason.trim()) throw new AppError('A reason is required to reopen final results.', 'invalid')
     r.status = 'locked'
     this.event(r.eventId).status = 'in_progress'
-    this.log(r.eventId, 'reopened', reason)
+    this.log(r.eventId, 'reopened', `Round ${r.roundNumber}. ${reason}`)
     this.commit()
   }
 
@@ -673,21 +800,45 @@ export class DemoRepo implements Repo {
       if (entry.status !== 'active') throw new AppError(`This entry is marked ${entry.status.toUpperCase()}; only an admin can change its scores.`, 'conflict')
     }
   }
+  private holesDone(roundId: string, entryId: string) {
+    const r = this.s.rounds.find((x) => x.id === roundId)!
+    let n = 0
+    for (let h = 1; h <= 18; h++) {
+      const seg = segmentFor(r.segments, h)
+      const mine = this.s.scores.filter((s) => s.roundId === roundId && s.entryId === entryId && s.hole === h)
+      if (seg.method === 'best_ball' ? mine.filter((s) => s.playerId).length >= seg.count : mine.some((s) => !s.playerId)) n++
+    }
+    return n
+  }
+  private assertSlot(slot: ScoreSlot) {
+    if (!Number.isInteger(slot.hole) || slot.hole < 1 || slot.hole > 18) throw new AppError('Hole must be 1–18.', 'invalid')
+    const r = this.s.rounds.find((x) => x.id === slot.roundId)!
+    const entry = this.s.entries.find((e) => e.id === slot.entryId)!
+    const method = segmentFor(r.segments, slot.hole).method
+    if (method === 'best_ball') {
+      if (!slot.playerId) throw new AppError(`Hole ${slot.hole} is best ball: enter each player's score.`, 'invalid')
+      const team = this.s.teams.find((t) => t.id === entry.teamId)
+      if (!team?.playerIds.includes(slot.playerId)) throw new AppError("That player isn't on this team.", 'conflict')
+    } else if (slot.playerId) throw new AppError(`Hole ${slot.hole} takes one score for the ${entry.kind}.`, 'invalid')
+  }
+  private findScore(slot: ScoreSlot) {
+    return this.s.scores.find((s) => s.roundId === slot.roundId && s.entryId === slot.entryId && s.hole === slot.hole && (s.playerId ?? null) === slot.playerId)
+  }
   private audit(s: Score, action: 'insert' | 'update' | 'delete', oldStrokes: number | null, newStrokes: number | null, reason: string) {
     this.s.audit.push({
-      id: uid(), roundId: s.roundId, entryId: s.entryId, hole: s.hole, action, oldStrokes, newStrokes, reason,
+      id: uid(), roundId: s.roundId, entryId: s.entryId, playerId: s.playerId, hole: s.hole, action, oldStrokes, newStrokes, reason,
       changedBy: DEMO_USER.id, changedByLabel: `${DEMO_USER.email} (${this.s.role})`, changedAt: nowIso(),
     })
   }
 
-  async setScore(roundId: string, entryId: string, hole: number, strokes: number, expectedVersion: number | null, reason: string) {
-    this.assertCanWrite(roundId, entryId, reason)
-    if (!Number.isInteger(hole) || hole < 1 || hole > 18) throw new AppError('Hole must be 1–18.', 'invalid')
+  async setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string) {
+    this.assertCanWrite(slot.roundId, slot.entryId, reason)
+    this.assertSlot(slot)
     if (!Number.isInteger(strokes) || strokes < 1 || strokes > 20) throw new AppError('A hole score must be between 1 and 20.', 'invalid')
-    const cur = this.s.scores.find((s) => s.roundId === roundId && s.entryId === entryId && s.hole === hole)
+    const cur = this.findScore(slot)
     if (!cur) {
       if (expectedVersion !== null) throw new AppError('This score was cleared by someone else.', 'conflict', null)
-      const s: Score = { id: uid(), roundId, entryId, hole, strokes, version: 1, updatedAt: nowIso(), updatedBy: DEMO_USER.id }
+      const s: Score = { id: uid(), ...slot, strokes, version: 1, updatedAt: nowIso(), updatedBy: DEMO_USER.id }
       this.s.scores.push(s)
       this.audit(s, 'insert', null, strokes, reason)
       this.commit()
@@ -701,17 +852,18 @@ export class DemoRepo implements Repo {
     this.commit()
     return clone(cur)
   }
-  async clearScore(roundId: string, entryId: string, hole: number, expectedVersion: number, reason: string) {
-    this.assertCanWrite(roundId, entryId, reason)
-    const cur = this.s.scores.find((s) => s.roundId === roundId && s.entryId === entryId && s.hole === hole)
+  async clearScore(slot: ScoreSlot, expectedVersion: number, reason: string) {
+    this.assertCanWrite(slot.roundId, slot.entryId, reason)
+    const cur = this.findScore(slot)
     if (!cur) return
     if (expectedVersion !== cur.version) throw new AppError('Someone else changed this hole.', 'conflict', clone(cur))
     this.s.scores = this.s.scores.filter((s) => s.id !== cur.id)
     this.audit(cur, 'delete', cur.strokes, null, reason)
     this.commit()
   }
-  async listScores(roundId: string) {
-    return clone(this.s.scores.filter((s) => s.roundId === roundId))
+  async listScores(eventId: string) {
+    const rounds = new Set(this.s.rounds.filter((r) => r.eventId === eventId).map((r) => r.id))
+    return clone(this.s.scores.filter((s) => rounds.has(s.roundId)))
   }
   async listAudit(eventId: string) {
     if (!this.isAdmin(eventId)) return []
@@ -723,7 +875,7 @@ export class DemoRepo implements Repo {
     return clone(this.s.log.filter((l) => l.eventId === eventId)).reverse()
   }
 
-  subscribe(_eventId: string, _roundId: string, onChange: (what: 'scores' | 'all') => void) {
+  subscribe(_eventId: string, onChange: (what: 'scores' | 'all') => void) {
     const l = () => onChange('all')
     this.listeners.add(l)
     return () => void this.listeners.delete(l)

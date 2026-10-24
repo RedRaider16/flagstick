@@ -1,17 +1,28 @@
 // Domain model shared by the demo store, the Supabase store and the UI.
 // Field names are camelCase here; the database uses snake_case.
+import type { Segment } from '../scoring/formats'
+export type { Segment }
 
 export type EventStatus = 'draft' | 'published' | 'in_progress' | 'finalized'
 export type RoundStatus = 'open' | 'locked' | 'finalized'
-export type Format = 'stroke_individual' | 'scramble_2'
 export type StartType = 'tee_times' | 'shotgun'
 export type TiebreakPolicy = 'share' | 'card_back'
 export type EntryStatus = 'active' | 'wd' | 'dq' | 'dnf' | 'ns'
 export type StaffRole = 'admin' | 'scorekeeper'
 
-export const FORMAT_LABEL: Record<Format, string> = {
-  stroke_individual: 'Individual stroke play (gross)',
-  scramble_2: 'Two-person scramble (gross)',
+export const ENTRY_STATUS_LABEL: Record<EntryStatus, string> = {
+  active: 'Playing',
+  wd: 'Withdrew (WD)',
+  dq: 'Disqualified (DQ)',
+  dnf: 'Did not finish (DNF)',
+  ns: 'No show (NS)',
+}
+
+export const TEAM_SIZE_LABEL: Record<number, string> = {
+  1: 'Individual',
+  2: '2-person teams',
+  3: '3-person teams',
+  4: '4-person teams',
 }
 
 export const EVENT_STATUS_LABEL: Record<EventStatus, string> = {
@@ -61,6 +72,12 @@ export interface GolfEvent {
   tiebreakPolicy: TiebreakPolicy
   createdAt: string
   registration: RegistrationSettings
+  /** 1 = individual; 2–4 = teams of that size. */
+  teamSize: number
+  /** true: one overall leaderboard across rounds. false: each round is its own competition. */
+  cumulative: boolean
+  /** A reusable setup for an annual event. Stays a draft; copy it to run this year's event. */
+  isTemplate: boolean
 }
 
 export interface RegistrationSettings {
@@ -162,9 +179,19 @@ export interface Round {
   roundNumber: number
   date: string
   teeId: string | null
-  format: Format
+  /** Hole ranges and how each is scored. See scoring/formats.ts. */
+  segments: Segment[]
+  /** Split this round's leaderboard by flight. */
+  useFlights: boolean
   startType: StartType
   status: RoundStatus
+}
+
+export interface Flight {
+  id: string
+  eventId: string
+  name: string
+  sortOrder: number
 }
 
 export interface Player {
@@ -172,6 +199,8 @@ export interface Player {
   eventId: string
   firstName: string
   lastName: string
+  /** Tee this player plays when it differs from the round's (individual events). */
+  teeId: string | null
 }
 
 /** Admin-only. Never shown on public screens or exports meant for spectators. */
@@ -196,6 +225,7 @@ export interface Entry {
   teamId: string | null
   status: EntryStatus
   statusNote: string
+  flightId: string | null
 }
 
 export interface Group {
@@ -211,6 +241,8 @@ export interface Score {
   id: string
   roundId: string
   entryId: string
+  /** Set on best-ball holes (one score per player); null for team and individual scores. */
+  playerId: string | null
   hole: number
   strokes: number
   version: number
@@ -222,6 +254,7 @@ export interface ScoreAudit {
   id: string
   roundId: string
   entryId: string
+  playerId: string | null
   hole: number
   action: 'insert' | 'update' | 'delete'
   oldStrokes: number | null
@@ -250,17 +283,23 @@ export interface StaffMember {
   groupIds: string[]
 }
 
-/** Everything a screen needs to render one event. */
+/** Everything a screen needs to render one event (all rounds). */
 export interface EventBundle {
   event: GolfEvent
   course: Course | null
-  tee: Tee | null
+  /** Every tee on the course. */
+  tees: Tee[]
+  /** Holes for every tee on the course. */
   holes: Hole[]
-  round: Round
+  /** In round order. */
+  rounds: Round[]
+  flights: Flight[]
   players: Player[]
   teams: Team[]
   entries: Entry[]
+  /** Groups of every round. */
   groups: Group[]
+  /** Scores of every round. */
   scores: Score[]
 }
 

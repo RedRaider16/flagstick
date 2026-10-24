@@ -8,3 +8,4 @@ dist
 coverage
 supabase/.temp
 supabase/.branches
+tsconfig.tsbuildinfo

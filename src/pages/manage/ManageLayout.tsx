@@ -3,8 +3,8 @@ import { usePath } from '../../app/context'
 import { useAccess, useBundle, useTitle } from '../../app/hooks'
 import { ErrorNote, Loading, StatusBadge } from '../../components/ui'
 import type { Access } from '../../data/repo'
-import { formatDate } from '../../domain/derive'
-import { FORMAT_LABEL, type EventBundle } from '../../domain/types'
+import { eventDates, eventFormatText, isTeamEvent } from '../../domain/derive'
+import type { EventBundle } from '../../domain/types'
 
 export interface ManageCtx {
   bundle: EventBundle
@@ -32,7 +32,7 @@ export function ManageLayout() {
       </>
     )
 
-  const isTeam = bundle.round.format === 'scramble_2'
+  const isTeam = isTeamEvent(bundle)
   const base = p(`manage/${bundle.event.id}`)
   const tabs: [string, string][] = [
     ['', 'Overview'],
@@ -40,6 +40,7 @@ export function ManageLayout() {
     ['registration', 'Registration'],
     ['players', 'Players'],
     ...(isTeam ? ([['teams', 'Teams']] as [string, string][]) : []),
+    ['flights', 'Flights'],
     ['groups', 'Groups'],
     ['staff', 'Scorekeepers'],
     ['scores', 'Scores'],
@@ -53,12 +54,12 @@ export function ManageLayout() {
         <div>
           <h1>{bundle.event.name}</h1>
           <div className="event-meta">
-            {formatDate(bundle.event.date)} at {bundle.course?.name ?? 'no course'}. {FORMAT_LABEL[bundle.round.format]}.
+            {eventDates(bundle)} at {bundle.course?.name ?? 'no course'}. {eventFormatText(bundle)}.
           </div>
         </div>
         <div className="row">
-          <StatusBadge status={bundle.event.status} />
-          {bundle.round.status === 'locked' && <span className="badge locked">Round locked</span>}
+          {bundle.event.isTemplate ? <span className="badge provisional">Template</span> : <StatusBadge status={bundle.event.status} />}
+          {bundle.rounds.filter((r) => r.status === 'locked').map((r) => <span key={r.id} className="badge locked">Round {r.roundNumber} locked</span>)}
           <span className="code-chip" title="Event code for spectators">{bundle.event.publicCode}</span>
         </div>
       </div>

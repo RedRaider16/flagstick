@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import { useApp, usePath } from '../app/context'
 import { useAction, useTitle } from '../app/hooks'
+import { FormatEditor } from '../components/FormatEditor'
 import { ErrorNote, Notice } from '../components/ui'
 import type { NewEventInput } from '../data/repo'
-import { FORMAT_LABEL, TIEBREAK_LABEL, type Course, type Format, type StartType, type Tee, type TiebreakPolicy } from '../domain/types'
+import { TEAM_SIZE_LABEL, TIEBREAK_LABEL, type Course, type StartType, type Tee, type TiebreakPolicy } from '../domain/types'
+import { defaultSegments, segmentsProblem } from '../scoring/formats'
 
 export const TIMEZONES = ['America/Chicago', 'America/Denver', 'America/New_York', 'America/Los_Angeles', 'America/Phoenix', 'America/Anchorage', 'Pacific/Honolulu']
 
@@ -20,7 +22,7 @@ export function NewEvent() {
   const [f, setF] = useState<NewEventInput>({
     name: '', courseId: '', teeId: null, date: new Date().toISOString().slice(0, 10),
     timezone: TIMEZONES.includes(browserTz) ? browserTz : 'America/Chicago', description: '',
-    format: 'stroke_individual', startType: 'tee_times', tiebreak: 'share',
+    teamSize: 1, segments: defaultSegments(1), startType: 'tee_times', tiebreak: 'share',
   })
   const set = (patch: Partial<NewEventInput>) => setF((x) => ({ ...x, ...patch }))
 
@@ -100,16 +102,19 @@ export function NewEvent() {
 
       <section className="panel">
         <fieldset>
-          <legend>Format</legend>
-          {(Object.keys(FORMAT_LABEL) as Format[]).map((k) => (
-            <label key={k} className="choice">
-              <input type="radio" name="format" checked={f.format === k} onChange={() => set({ format: k })} />
-              <span>
-                {FORMAT_LABEL[k]}
-                <span className="hint">{k === 'scramble_2' ? 'Teams of two record one score per hole.' : 'Each player records their own score per hole.'}</span>
-              </span>
-            </label>
-          ))}
+          <legend>Players or teams</legend>
+          <div className="row">
+            {[1, 2, 3, 4].map((n) => (
+              <label key={n} className="choice" style={{ marginRight: '1rem' }}>
+                <input type="radio" name="size" checked={f.teamSize === n} onChange={() => set({ teamSize: n, segments: defaultSegments(n) })} />
+                <span>{TEAM_SIZE_LABEL[n]}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>Format{' '}<span className="hint" style={{ display: 'inline' }}>(round 1; add more rounds and flights after creating)</span></legend>
+          <FormatEditor id="new" teamSize={f.teamSize} value={f.segments} onChange={(segments) => set({ segments })} />
         </fieldset>
         <fieldset>
           <legend>Start</legend>
@@ -131,7 +136,7 @@ export function NewEvent() {
         </fieldset>
       </section>
       <div className="row">
-        <button className="btn primary" type="submit" disabled={busy || !f.name.trim() || !f.courseId}>{busy ? 'Creating…' : 'Create event'}</button>
+        <button className="btn primary" type="submit" disabled={busy || !f.name.trim() || !f.courseId || !!segmentsProblem(f.segments, f.teamSize)}>{busy ? 'Creating…' : 'Create event'}</button>
         <span className="muted small">Starts as a draft that only staff can see.</span>
       </div>
     </form>
