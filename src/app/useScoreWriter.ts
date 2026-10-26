@@ -22,7 +22,8 @@ export function parseCellKey(k: string): ScoreSlot {
 const sameSlot = (s: Score, slot: ScoreSlot) =>
   s.roundId === slot.roundId && s.entryId === slot.entryId && s.hole === slot.hole && (s.playerId ?? null) === slot.playerId
 
-export function useScoreWriter(bundle: EventBundle | null, setBundle: (fn: (b: EventBundle | null) => EventBundle | null) => void) {
+/** cardCode: save with a printed scorecard's QR code instead of the signed-in role. */
+export function useScoreWriter(bundle: EventBundle | null, setBundle: (fn: (b: EventBundle | null) => EventBundle | null) => void, cardCode?: string) {
   const { repo } = useApp()
   const [cells, setCells] = useState<Record<string, CellState>>({})
 
@@ -56,10 +57,10 @@ export function useScoreWriter(bundle: EventBundle | null, setBundle: (fn: (b: E
       setCell(k, { kind: 'saving', value })
       try {
         if (value === null) {
-          await repo.clearScore(slot, expected!, reason)
+          await repo.clearScore(slot, expected!, reason, cardCode)
           applyLocal(slot, null)
         } else {
-          const s = await repo.setScore(slot, value, expected, reason)
+          const s = await repo.setScore(slot, value, expected, reason, cardCode)
           applyLocal(slot, s)
         }
         setCell(k, { kind: 'saved' })
@@ -72,7 +73,7 @@ export function useScoreWriter(bundle: EventBundle | null, setBundle: (fn: (b: E
         }
       }
     },
-    [bundle, repo, applyLocal],
+    [bundle, repo, applyLocal, cardCode],
   )
 
   /** Conflict resolution: keep what's stored now. */

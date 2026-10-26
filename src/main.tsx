@@ -25,7 +25,7 @@ import { AdminScores } from './pages/manage/AdminScores'
 import { History } from './pages/manage/History'
 import { Exports } from './pages/manage/Exports'
 import { PrintPairings, PrintScorecards } from './pages/manage/Print'
-import { ScoreHome, ScoreGroup } from './pages/ScoreEntry'
+import { CardScore, ScoreHome, ScoreGroup } from './pages/ScoreEntry'
 
 const pages: RouteObject[] = [
   { index: true, element: <Home /> },
@@ -37,6 +37,7 @@ const pages: RouteObject[] = [
   { path: 'e/:code/register', element: <Register /> },
   { path: 'score/:eventId', element: <ScoreHome /> },
   { path: 'score/:eventId/:groupId', element: <ScoreGroup /> },
+  { path: 'c/:code', element: <CardScore /> },
   { path: 'manage/:eventId/print/pairings', element: <PrintPairings /> },
   { path: 'manage/:eventId/print/scorecards', element: <PrintScorecards /> },
   {

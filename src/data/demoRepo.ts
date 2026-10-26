@@ -993,14 +993,22 @@ export class DemoRepo implements Repo {
   }
 
   // ── Scores ──
-  private assertCanWrite(roundId: string, entryId: string, reason: string) {
+  private cardLabel: string | null = null
+  private assertCanWrite(roundId: string, entryId: string, reason: string, cardCode?: string) {
+    this.cardLabel = null
     const r = this.s.rounds.find((x) => x.id === roundId)
     if (!r) throw new AppError('Round not found.', 'not_found')
     const entry = this.s.entries.find((e) => e.id === entryId && e.eventId === r.eventId)
     if (!entry) throw new AppError('That entry is not in this event.', 'not_found')
     const ev = this.event(r.eventId)
-    const admin = this.isAdmin(r.eventId)
-    if (!admin) {
+    const admin = !cardCode && this.isAdmin(r.eventId)
+    if (cardCode) {
+      const groupId = Object.entries(this.s.cards ?? {}).find(([, c]) => c === cardCode.toLowerCase())?.[0]
+      const g = this.s.groups.find((x) => x.id === groupId)
+      if (!g) throw new AppError("This scorecard code isn't valid any more. Ask the organizer for a new card.", 'forbidden')
+      if (g.roundId !== roundId || !g.entryIds.includes(entryId)) throw new AppError("That entry isn't on this scorecard.", 'forbidden')
+      this.cardLabel = `Scorecard QR, ${g.name}`
+    } else if (!admin) {
       if (this.s.role !== 'scorekeeper') throw new AppError('Sign in to enter scores.', 'auth')
       const groups = this.scorekeeperGroups(r.eventId)
       if (!this.s.groups.some((g) => groups.includes(g.id) && g.entryIds.includes(entryId)))
@@ -1044,18 +1052,18 @@ export class DemoRepo implements Repo {
   private audit(s: Score, action: 'insert' | 'update' | 'delete', oldStrokes: number | null, newStrokes: number | null, reason: string) {
     this.s.audit.push({
       id: uid(), roundId: s.roundId, entryId: s.entryId, playerId: s.playerId, hole: s.hole, action, oldStrokes, newStrokes, reason,
-      changedBy: DEMO_USER.id, changedByLabel: `${DEMO_USER.email} (${this.s.role})`, changedAt: nowIso(),
+      changedBy: this.cardLabel ? null : DEMO_USER.id, changedByLabel: this.cardLabel ?? `${DEMO_USER.email} (${this.s.role})`, changedAt: nowIso(),
     })
   }
 
-  async setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string) {
-    this.assertCanWrite(slot.roundId, slot.entryId, reason)
+  async setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string, cardCode?: string) {
+    this.assertCanWrite(slot.roundId, slot.entryId, cardCode ? '' : reason, cardCode)
     this.assertSlot(slot)
     if (!Number.isInteger(strokes) || strokes < 1 || strokes > 20) throw new AppError('A hole score must be between 1 and 20.', 'invalid')
     const cur = this.findScore(slot)
     if (!cur) {
       if (expectedVersion !== null) throw new AppError('This score was cleared by someone else.', 'conflict', null)
-      const s: Score = { id: uid(), ...slot, strokes, version: 1, updatedAt: nowIso(), updatedBy: DEMO_USER.id }
+      const s: Score = { id: uid(), ...slot, strokes, version: 1, updatedAt: nowIso(), updatedBy: this.cardLabel ? null : DEMO_USER.id }
       this.s.scores.push(s)
       this.audit(s, 'insert', null, strokes, reason)
       this.commit()
@@ -1064,19 +1072,45 @@ export class DemoRepo implements Repo {
     if (expectedVersion !== cur.version) throw new AppError('Someone else changed this hole.', 'conflict', clone(cur))
     if (cur.strokes === strokes) return clone(cur)
     const old = cur.strokes
-    Object.assign(cur, { strokes, version: cur.version + 1, updatedAt: nowIso(), updatedBy: DEMO_USER.id })
+    Object.assign(cur, { strokes, version: cur.version + 1, updatedAt: nowIso(), updatedBy: this.cardLabel ? null : DEMO_USER.id })
     this.audit(cur, 'update', old, strokes, reason)
     this.commit()
     return clone(cur)
   }
-  async clearScore(slot: ScoreSlot, expectedVersion: number, reason: string) {
-    this.assertCanWrite(slot.roundId, slot.entryId, reason)
+  async clearScore(slot: ScoreSlot, expectedVersion: number, reason: string, cardCode?: string) {
+    this.assertCanWrite(slot.roundId, slot.entryId, cardCode ? '' : reason, cardCode)
     const cur = this.findScore(slot)
     if (!cur) return
     if (expectedVersion !== cur.version) throw new AppError('Someone else changed this hole.', 'conflict', clone(cur))
     this.s.scores = this.s.scores.filter((s) => s.id !== cur.id)
     this.audit(cur, 'delete', cur.strokes, null, reason)
     this.commit()
+  }
+  async scoringCardCodes(roundId: string) {
+    const r = this.s.rounds.find((x) => x.id === roundId)
+    if (!r || !this.isAdmin(r.eventId)) throw new AppError('Only an event admin can print scorecard codes.', 'forbidden')
+    const cards = (this.s.cards ??= {})
+    let made = false
+    for (const g of this.s.groups.filter((x) => x.roundId === roundId))
+      if (!cards[g.id]) {
+        cards[g.id] = Array.from({ length: 32 }, () => '0123456789abcdef'[Math.floor(Math.random() * 16)]).join('')
+        made = true
+      }
+    if (made) this.commit()
+    return new Map(this.s.groups.filter((x) => x.roundId === roundId).map((g) => [g.id, cards[g.id]!]))
+  }
+  async resetScoringCards(roundId: string) {
+    const r = this.s.rounds.find((x) => x.id === roundId)
+    if (!r || !this.isAdmin(r.eventId)) throw new AppError('Only an event admin can reset scorecard codes.', 'forbidden')
+    for (const g of this.s.groups.filter((x) => x.roundId === roundId)) delete this.s.cards?.[g.id]
+    this.commit()
+  }
+  async scoringCard(code: string) {
+    const groupId = Object.entries(this.s.cards ?? {}).find(([, c]) => c === code.toLowerCase())?.[0]
+    const g = this.s.groups.find((x) => x.id === groupId)
+    const r = g && this.s.rounds.find((x) => x.id === g.roundId)
+    if (!g || !r || this.event(r.eventId).status === 'draft') return null
+    return { eventId: r.eventId, roundId: r.id, groupId: g.id }
   }
   async listScores(eventId: string) {
     const rounds = new Set(this.s.rounds.filter((r) => r.eventId === eventId).map((r) => r.id))

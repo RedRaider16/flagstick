@@ -29,6 +29,8 @@ import { DEFAULT_ALLOWANCES } from '../scoring/handicap'
 export interface DemoState {
   schema: 4
   role: 'admin' | 'scorekeeper' | 'spectator'
+  /** Scorecard QR codes: groupId → code. Optional so saved demos keep loading. */
+  cards?: Record<string, string>
   organizers: boolean
   courses: (Course & { ownerId: string })[]
   tees: Tee[]

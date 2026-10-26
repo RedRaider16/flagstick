@@ -96,11 +96,39 @@ function NoAccess({ code }: { code: string | null }) {
 
 export function ScoreGroup() {
   const { eventId, groupId } = useParams()
+  return <GroupScoring eventId={eventId} groupId={groupId} />
+}
+
+/** Opened from the QR code on a printed scorecard: scores that card's group, no sign-in. */
+export function CardScore() {
+  const { code } = useParams()
+  const { repo } = useApp()
+  const [card, setCard] = useState<{ eventId: string; groupId: string } | null | undefined>(undefined)
+  useTitle('Scorecard')
+  useEffect(() => {
+    let live = true
+    repo.scoringCard(code ?? '').then((c) => live && setCard(c), () => live && setCard(null))
+    return () => {
+      live = false
+    }
+  }, [repo, code])
+  if (card === undefined) return <Loading />
+  if (card === null)
+    return (
+      <>
+        <h1>This scorecard can't be used</h1>
+        <p>The code on this card isn't valid any more, or the event hasn't been published yet. Ask the organizer for a new card.</p>
+      </>
+    )
+  return <GroupScoring eventId={card.eventId} groupId={card.groupId} cardCode={code} />
+}
+
+function GroupScoring({ eventId, groupId, cardCode }: { eventId: string | undefined; groupId: string | undefined; cardCode?: string }) {
   const p = usePath()
   const { bundle, setBundle, error, reload } = useBundle(eventId)
   const access = useAccess(eventId)
   const online = useOnline()
-  const writer = useScoreWriter(bundle, setBundle)
+  const writer = useScoreWriter(bundle, setBundle, cardCode)
   const dialog = useReasonDialog()
   const group = bundle?.groups.find((g) => g.id === groupId)
   const round = bundle && group ? bundle.rounds.find((r) => r.id === group.roundId) ?? null : null
@@ -132,12 +160,12 @@ export function ScoreGroup() {
   if (error) return <ErrorNote error={error} />
   if (bundle && !group) return <Notice kind="error">Group not found.</Notice>
   if (!bundle || !access || !group || !round || idx === null) return <Loading />
-  if (!access.role || (access.role === 'scorekeeper' && !access.groupIds.includes(group.id)))
+  if (!cardCode && (!access.role || (access.role === 'scorekeeper' && !access.groupIds.includes(group.id))))
     return <NoAccess code={bundle.event.status !== 'draft' ? bundle.event.publicCode : null} />
   const holes = roundHoles(bundle, round)
   if (holes.length !== 18) return <Notice kind="warn">The course layout isn't set up yet, so scores can't be entered.</Notice>
 
-  const isAdmin = access.role === 'admin'
+  const isAdmin = !cardCode && access.role === 'admin'
   const blocked = scoringBlocked(bundle, round, isAdmin)
   const needsReason = isAdmin && round.status === 'locked'
   const holeNo = order[idx]!
@@ -247,7 +275,7 @@ export function ScoreGroup() {
         )
       })}
 
-      {bundle.sideGames.filter((g) => g.roundId === round.id && g.kind !== 'skins' && g.holes.includes(holeNo)).map((g) => (
+      {!cardCode && bundle.sideGames.filter((g) => g.roundId === round.id && g.kind !== 'skins' && g.holes.includes(holeNo)).map((g) => (
         <section key={g.id} className="entrant contest" aria-label={`${g.name} on hole ${holeNo}`}>
           <div className="entrant-name">{g.name} <span className="muted small">hole {holeNo}</span></div>
           <p className="small muted" style={{ margin: '.2rem 0 0' }}>If someone in your group beats the current winner, pick them and save.</p>

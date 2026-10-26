@@ -259,8 +259,17 @@ export interface Repo {
 
   // ── Scores ──
   /** expectedVersion: version last seen, or null if the hole looked empty. Throws AppError('conflict'). */
-  setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string): Promise<Score>
-  clearScore(slot: ScoreSlot, expectedVersion: number, reason: string): Promise<void>
+  /** cardCode: score with a printed card's QR code instead of a signed-in role. */
+  setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string, cardCode?: string): Promise<Score>
+  clearScore(slot: ScoreSlot, expectedVersion: number, reason: string, cardCode?: string): Promise<void>
+
+  // ── Scorecard QR codes ──
+  /** Admin: groupId → card code for every group in the round (missing ones are created). */
+  scoringCardCodes(roundId: string): Promise<Map<string, string>>
+  /** Admin: cancel every card code in the round, e.g. after a card is lost. */
+  resetScoringCards(roundId: string): Promise<void>
+  /** Public: what a card code scores, or null when it isn't valid. */
+  scoringCard(code: string): Promise<{ eventId: string; roundId: string; groupId: string } | null>
   /** Every round's scores. */
   listScores(eventId: string): Promise<Score[]>
   listAudit(eventId: string): Promise<ScoreAudit[]>

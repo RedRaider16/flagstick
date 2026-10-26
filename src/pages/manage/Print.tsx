@@ -1,5 +1,8 @@
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
-import { usePath } from '../../app/context'
+import QRCode from 'qrcode'
+import { useApp, usePath } from '../../app/context'
+import { errorMessage } from '../../data/errors'
 import { useAccess, useBundle, useTitle } from '../../app/hooks'
 import { ErrorNote, Loading, Notice } from '../../components/ui'
 import { currentRound, entryPlayers, formatDate, formatOf, formatTeeTime, isTeamEvent, nameOf, roundGroups, roundHoles, teeOf } from '../../domain/derive'
@@ -17,13 +20,70 @@ function usePrintData() {
   return { bundle, error, access, round }
 }
 
-function Toolbar({ b }: { b: EventBundle }) {
+function Toolbar({ b, children }: { b: EventBundle; children?: ReactNode }) {
   const p = usePath()
   return (
     <div className="row no-print" style={{ marginBottom: '1rem' }}>
       <Link className="btn quiet" to={p(`manage/${b.event.id}/exports`)}>Back</Link>
       <button className="btn primary" type="button" onClick={() => window.print()}>Print</button>
+      {children}
     </div>
+  )
+}
+
+/** QR code (as SVG markup) per group: a link that opens scoring for that card without signing in. */
+function useCardQrs(round: Round | null, enabled: boolean) {
+  const { repo } = useApp()
+  const p = usePath()
+  const [qrs, setQrs] = useState<Map<string, string> | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const load = useCallback(async () => {
+    if (!round || !enabled) return
+    try {
+      const codes = await repo.scoringCardCodes(round.id)
+      const root = `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}`
+      const out = new Map<string, string>()
+      for (const [groupId, code] of codes)
+        out.set(groupId, await QRCode.toString(`${root}${p(`c/${code}`)}`, { type: 'svg', margin: 0, errorCorrectionLevel: 'M' }))
+      setQrs(out)
+      setError(null)
+    } catch (e) {
+      setError(errorMessage(e))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repo, round?.id, enabled])
+  useEffect(() => {
+    void load()
+  }, [load])
+  return { qrs, error, reload: load }
+}
+
+function ResetCodes({ round, onDone }: { round: Round; onDone: () => void }) {
+  const { repo } = useApp()
+  const [asking, setAsking] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  if (!asking)
+    return (
+      <>
+        <button className="btn quiet" type="button" onClick={() => setAsking(true)}>New QR codes…</button>
+        {msg && <span className="small">{msg}</span>}
+      </>
+    )
+  return (
+    <span className="row" style={{ gap: '.4rem' }}>
+      <span className="small">Every card already printed for this round will stop working. Continue?</span>
+      <button className="btn danger small" type="button" onClick={async () => {
+        try {
+          await repo.resetScoringCards(round.id)
+          setMsg('New codes made. Reprint the cards.')
+          onDone()
+        } catch (e) {
+          setMsg(errorMessage(e))
+        }
+        setAsking(false)
+      }}>Make new codes</button>
+      <button className="btn quiet small" type="button" onClick={() => setAsking(false)}>Cancel</button>
+    </span>
   )
 }
 
@@ -62,6 +122,7 @@ export function PrintPairings() {
 export function PrintScorecards() {
   const { bundle: b, error, access, round } = usePrintData()
   useTitle('Scorecards')
+  const cards = useCardQrs(round, access?.role === 'admin' && !!b && !b.event.isTemplate)
   if (error) return <ErrorNote error={error} />
   if (!b || !access || !round) return <Loading />
   if (access.role !== 'admin') return <Notice kind="warn">Admins only.</Notice>
@@ -73,7 +134,9 @@ export function PrintScorecards() {
   const hole = (n: number) => holesInfo.find((x) => x.number === n)!
   return (
     <>
-      <Toolbar b={b} />
+      <Toolbar b={b}>{!b.event.isTemplate && <ResetCodes round={round} onDone={() => void cards.reload()} />}</Toolbar>
+      {cards.error && <Notice kind="error">QR codes couldn't be made: {cards.error}</Notice>}
+      {b.event.isTemplate && <Notice kind="info">Cards printed from a template have no QR code. Print them from this year's event.</Notice>}
       {groups.length === 0 && <Notice kind="info">Create groups first.</Notice>}
       {groups.map((g, gi) => {
         const order = rotation(g.startingHole)
@@ -81,9 +144,17 @@ export function PrintScorecards() {
         const entries = g.entryIds.map((id) => b.entries.find((e) => e.id === id)).filter((e) => !!e)
         return (
           <div key={g.id} className={`scorecard ${gi % 2 === 1 ? 'page-break' : ''}`}>
-            <div className="split">
-              <strong>{b.event.name}</strong>
-              <span>{b.rounds.length > 1 ? `Round ${round.roundNumber}. ` : ''}{g.name}. Starts hole {g.startingHole}{g.teeTime ? ` at ${formatTeeTime(g.teeTime)}` : ''}. {formatDate(round.date)}</span>
+            <div className="card-head">
+              <div>
+                <strong>{b.event.name}</strong>
+                <div>{b.rounds.length > 1 ? `Round ${round.roundNumber}. ` : ''}{g.name}. Starts hole {g.startingHole}{g.teeTime ? ` at ${formatTeeTime(g.teeTime)}` : ''}. {formatDate(round.date)}</div>
+              </div>
+              {cards.qrs?.get(g.id) && (
+                <div className="card-qr">
+                  <div className="qr" role="img" aria-label={`QR code to keep score for ${g.name}`} dangerouslySetInnerHTML={{ __html: cards.qrs.get(g.id)! }} />
+                  <div>Scorer: scan to<br />enter scores</div>
+                </div>
+              )}
             </div>
             {halves.map((holes, hi) => (
               <table key={hi} style={{ marginTop: '.4rem' }}>

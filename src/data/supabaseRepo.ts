@@ -636,14 +636,28 @@ export class SupabaseRepo implements Repo {
   }
 
   // ── Scores ──
-  async setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string) {
-    const r = await run(
-      this.sb.rpc('set_score', { ...slotArgs(slot), p_strokes: strokes, p_expected_version: expectedVersion, p_reason: reason }).single(),
-    )
+  async setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string, cardCode?: string) {
+    const r = cardCode
+      ? await run(this.sb.rpc('card_set_score', { p_token: cardCode, p_entry: slot.entryId, p_hole: slot.hole, p_strokes: strokes, p_expected_version: expectedVersion, p_player: slot.playerId }).single())
+      : await run(this.sb.rpc('set_score', { ...slotArgs(slot), p_strokes: strokes, p_expected_version: expectedVersion, p_reason: reason }).single())
     return mapScore(r as Row)
   }
-  async clearScore(slot: ScoreSlot, expectedVersion: number, reason: string) {
-    await run(this.sb.rpc('clear_score', { ...slotArgs(slot), p_expected_version: expectedVersion, p_reason: reason }))
+  async clearScore(slot: ScoreSlot, expectedVersion: number, reason: string, cardCode?: string) {
+    if (cardCode) await run(this.sb.rpc('card_clear_score', { p_token: cardCode, p_entry: slot.entryId, p_hole: slot.hole, p_expected_version: expectedVersion, p_player: slot.playerId }))
+    else await run(this.sb.rpc('clear_score', { ...slotArgs(slot), p_expected_version: expectedVersion, p_reason: reason }))
+  }
+  async scoringCardCodes(roundId: string) {
+    const rows = (await run(this.sb.rpc('scoring_card_codes', { p_round: roundId }))) as Row[]
+    return new Map(rows.map((r) => [r.group_id as string, r.token as string]))
+  }
+  async resetScoringCards(roundId: string) {
+    await run(this.sb.rpc('reset_scoring_cards', { p_round: roundId }))
+  }
+  async scoringCard(code: string) {
+    if (!/^[0-9a-f]{32}$/i.test(code)) return null
+    const rows = (await run(this.sb.rpc('scoring_card', { p_token: code }))) as Row[]
+    const r = rows[0]
+    return r ? { eventId: r.event_id as string, roundId: r.round_id as string, groupId: r.group_id as string } : null
   }
   async listScores(eventId: string) {
     // 45 teams × 3 players × 18 holes × 2 rounds ≈ 4,900 rows; page past PostgREST's 1,000-row cap.
