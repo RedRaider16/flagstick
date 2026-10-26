@@ -5,13 +5,8 @@ import { useAction } from '../../app/hooks'
 import { ErrorNote, Notice, ScopeTabs, useReasonDialog } from '../../components/ui'
 import { currentRound, formatTeeTime, isTeamEvent, nameOf, roundGroups } from '../../domain/derive'
 import type { Group } from '../../domain/types'
+import { groupTeeTime } from '../../domain/setup'
 import { useManage } from './ManageLayout'
-
-function addMinutes(t: string, mins: number): string {
-  const [h, m] = t.split(':').map(Number)
-  const total = ((h ?? 0) * 60 + (m ?? 0) + mins) % (24 * 60)
-  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
-}
 
 export function Groups() {
   const { bundle, reload } = useManage()
@@ -32,12 +27,14 @@ export function Groups() {
   const [size, setSize] = useState(round.groupSize)
   const [first, setFirst] = useState(round.startTime ?? '08:00')
   const [interval, setIntervalMins] = useState(round.teeIntervalMinutes)
+  const [perTime, setPerTime] = useState(round.groupsPerTime ?? 1)
   // Defaults come from the round's tee sheet (Event & course).
   useEffect(() => {
     setSize(round.groupSize)
     setFirst(round.startTime ?? '08:00')
     setIntervalMins(round.teeIntervalMinutes)
-  }, [round.id, round.groupSize, round.startTime, round.teeIntervalMinutes])
+    setPerTime(round.groupsPerTime ?? 1)
+  }, [round.id, round.groupSize, round.startTime, round.teeIntervalMinutes, round.groupsPerTime])
   const [newName, setNewName] = useState('')
   const [newTime, setNewTime] = useState('')
   const [newHole, setNewHole] = useState(1)
@@ -73,8 +70,9 @@ export function Groups() {
           name = `Hole ${hole}${suffix}`
           teeTime = first
         } else {
+          // Groups sharing a tee time go off together (1A, 1B …), then the next time.
           name = `Group ${existing + i + 1}`
-          teeTime = addMinutes(first, (existing + i) * interval)
+          teeTime = groupTeeTime(first, existing + i, interval, perTime)
         }
         let n = 1
         while (roundGs.some((g) => g.name === name)) name = `${name} (${++n})`
@@ -130,8 +128,16 @@ export function Groups() {
             </div>
             {!shotgun && (
               <div className="field">
-                <label htmlFor="g-int">Minutes between groups</label>
+                <label htmlFor="g-int">Minutes between tee times</label>
                 <input id="g-int" type="number" min={5} max={30} value={interval} onChange={(e) => setIntervalMins(Number(e.target.value) || 10)} />
+              </div>
+            )}
+            {!shotgun && (
+              <div className="field">
+                <label htmlFor="g-gpt">Groups per tee time</label>
+                <select id="g-gpt" value={perTime} onChange={(e) => setPerTime(Number(e.target.value))}>
+                  {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
               </div>
             )}
           </div>

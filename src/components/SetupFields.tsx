@@ -9,6 +9,7 @@ export interface TeeSheet {
   startingHole: number
   groupSize: number
   teeIntervalMinutes: number
+  groupsPerTime?: number
 }
 
 /** Shotgun or tee times, start time, first hole, group size. */
@@ -30,10 +31,21 @@ export function TeeSheetFields({ value, onChange, id, teamSize, disabled }: { va
         <input id={`${id}-time`} type="time" value={value.startTime ?? ''} onChange={(e) => set({ startTime: e.target.value || null })} />
       </div>
       {value.startType === 'tee_times' ? (
-        <div className="field">
-          <label htmlFor={`${id}-int`}>Minutes between groups</label>
-          <input id={`${id}-int`} type="number" min={5} max={30} value={value.teeIntervalMinutes} onChange={(e) => set({ teeIntervalMinutes: Math.min(30, Math.max(5, Number(e.target.value) || 10)) })} />
-        </div>
+        <>
+          <div className="field">
+            <label htmlFor={`${id}-int`}>Minutes between tee times</label>
+            <input id={`${id}-int`} type="number" min={5} max={30} value={value.teeIntervalMinutes} onChange={(e) => set({ teeIntervalMinutes: Math.min(30, Math.max(5, Number(e.target.value) || 10)) })} />
+          </div>
+          <div className="field">
+            <label htmlFor={`${id}-gpt`}>Groups per tee time</label>
+            <select id={`${id}-gpt`} value={value.groupsPerTime ?? 1} onChange={(e) => set({ groupsPerTime: Number(e.target.value) })}>
+              <option value={1}>1 group</option>
+              <option value={2}>2 groups (1A, 1B)</option>
+              <option value={3}>3 groups</option>
+              <option value={4}>4 groups</option>
+            </select>
+          </div>
+        </>
       ) : (
         <div className="field">
           <label htmlFor={`${id}-hole`}>First group starts on</label>

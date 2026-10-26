@@ -16,7 +16,7 @@ export const groupSizeFor = (teamSize: number) => (teamSize === 1 ? 4 : teamSize
 export function blankRound(date: string, teeId: string | null, teamSize: number): RoundSetup {
   return {
     date, teeId, segments: defaultSegments(teamSize), startType: 'tee_times', startTime: '08:00', startingHole: 1,
-    groupSize: groupSizeFor(teamSize), teeIntervalMinutes: 10, useFlights: true,
+    groupSize: groupSizeFor(teamSize), teeIntervalMinutes: 10, groupsPerTime: 1, useFlights: true,
   }
 }
 
@@ -43,7 +43,7 @@ export function setupFromBundle(b: EventBundle, firstDate: string, name: string)
     scoringBasis: b.event.scoringBasis, netAllowances: b.event.netAllowances, maxHandicapIndex: b.event.maxHandicapIndex, hidePurse: b.event.hidePurse,
     rounds: b.rounds.map((r) => ({
       date: addDays(r.date, shift), teeId: r.teeId, segments: r.segments, startType: r.startType, startTime: r.startTime,
-      startingHole: r.startingHole, groupSize: r.groupSize, teeIntervalMinutes: r.teeIntervalMinutes, useFlights: r.useFlights,
+      startingHole: r.startingHole, groupSize: r.groupSize, teeIntervalMinutes: r.teeIntervalMinutes, groupsPerTime: r.groupsPerTime ?? 1, useFlights: r.useFlights,
     })),
     flights: b.flights.map((f) => f.name),
     registration: {
@@ -167,3 +167,13 @@ export function stepProblems(s: EventSetup, step: StepKey, teeHoleCounts: Record
 
 export const allProblems = (s: EventSetup, counts: Record<string, number> = {}) =>
   (['basics', 'format', 'flights', 'registration', 'prizes'] as StepKey[]).flatMap((k) => stepProblems(s, k, counts).filter((x) => !/holes set up/.test(x)))
+
+/**
+ * Tee time of the nth group (0-based) on a tee-time sheet: `perTime` groups share
+ * each time (1A, 1B …), then the next time comes `interval` minutes later.
+ */
+export function groupTeeTime(first: string, n: number, interval: number, perTime = 1): string {
+  const [h, m] = first.split(':').map(Number)
+  const total = ((h ?? 0) * 60 + (m ?? 0) + Math.floor(n / Math.max(1, perTime)) * interval) % (24 * 60)
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+}

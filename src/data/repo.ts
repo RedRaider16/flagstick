@@ -79,7 +79,7 @@ export interface ScoreSlot {
 }
 
 export type EventPatch = Partial<Pick<GolfEvent, 'name' | 'date' | 'timezone' | 'description' | 'tiebreakPolicy' | 'teamSize' | 'cumulative' | 'isTemplate' | 'scoringBasis' | 'netAllowances' | 'maxHandicapIndex' | 'hidePurse'>>
-export type RoundPatch = Partial<Pick<Round, 'date' | 'teeId' | 'segments' | 'useFlights' | 'startType' | 'startTime' | 'startingHole' | 'groupSize' | 'teeIntervalMinutes'>>
+export type RoundPatch = Partial<Pick<Round, 'date' | 'teeId' | 'segments' | 'useFlights' | 'startType' | 'startTime' | 'startingHole' | 'groupSize' | 'teeIntervalMinutes' | 'groupsPerTime'>>
 
 export interface QuestionInput {
   label: string
@@ -110,6 +110,8 @@ export interface RoundSetup {
   startingHole: number
   groupSize: number
   teeIntervalMinutes: number
+  /** Missing in drafts saved before this setting existed: treat as 1. */
+  groupsPerTime?: number
   useFlights: boolean
 }
 

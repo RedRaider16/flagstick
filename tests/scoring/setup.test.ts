@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DemoRepo } from '../../src/data/demoRepo'
 import { buildEventLeaderboard, leaderboardPayouts, netCards, skinsFor } from '../../src/domain/derive'
-import { allProblems, blankSetup, draftPayoutSlots, nameForYear, setupFromBundle, stepProblems, withRoundCount, withTeamSize } from '../../src/domain/setup'
+import { allProblems, blankSetup, draftPayoutSlots, groupTeeTime, nameForYear, setupFromBundle, stepProblems, withRoundCount, withTeamSize } from '../../src/domain/setup'
 
 // The demo store uses localStorage and BroadcastChannel when present; vitest runs in node without them.
 const repo = () => new DemoRepo()
@@ -51,6 +51,12 @@ describe('setup drafts', () => {
     expect(draftPayoutSlots(s).map((x) => x.label)).toEqual(['Overall · A', 'Overall · B'])
     s = { ...s, cumulative: false, scoringBasis: 'both', rounds: s.rounds.map((r, i) => ({ ...r, useFlights: i === 1 })) }
     expect(draftPayoutSlots(s).map((x) => x.label)).toEqual(['Gross · Round 1', 'Gross · Round 2 · A', 'Gross · Round 2 · B', 'Net · Round 1', 'Net · Round 2 · A', 'Net · Round 2 · B'])
+  })
+
+  it('two groups per tee time share each time, then step by the interval', () => {
+    expect([0, 1, 2, 3, 4].map((n) => groupTeeTime('08:00', n, 15, 2))).toEqual(['08:00', '08:00', '08:15', '08:15', '08:30'])
+    expect([0, 1, 2].map((n) => groupTeeTime('07:40', n, 10))).toEqual(['07:40', '07:50', '08:00'])
+    expect(groupTeeTime('12:50', 2, 10, 1)).toBe('13:10')
   })
 
   it('checks each step', () => {

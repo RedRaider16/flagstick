@@ -59,7 +59,7 @@ export interface DemoState {
 /** Defaults for event fields added with the step-by-step setup. */
 const EXTRAS = { scoringBasis: 'gross' as const, netAllowances: DEFAULT_ALLOWANCES, maxHandicapIndex: null, hidePurse: false }
 const REG_EXTRAS = { opensAt: null, waitlistLimit: null, showParticipants: false }
-const SHEET = (startTime: string | null, groupSize: number) => ({ startTime, startingHole: 1, groupSize, teeIntervalMinutes: 10 })
+const SHEET = (startTime: string | null, groupSize: number) => ({ startTime, startingHole: 1, groupSize, teeIntervalMinutes: 10, groupsPerTime: 1 })
 
 export const DEMO_USER = { id: 'demo-user', email: 'you@demo.invalid' }
 

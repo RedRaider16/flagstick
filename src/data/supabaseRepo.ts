@@ -100,7 +100,7 @@ const mapRound = (r: Row): Round => ({
   segments: (r.segments as Row[]).map((x) => ({ from: Number(x.from), to: Number(x.to), method: x.method, count: Number(x.count ?? 1) })),
   useFlights: r.use_flights ?? true, startType: r.start_type, status: r.status,
   startTime: r.start_time ? String(r.start_time).slice(0, 5) : null, startingHole: r.starting_hole ?? 1,
-  groupSize: r.group_size ?? 4, teeIntervalMinutes: r.tee_interval_minutes ?? 10,
+  groupSize: r.group_size ?? 4, teeIntervalMinutes: r.tee_interval_minutes ?? 10, groupsPerTime: r.groups_per_time ?? 1,
 })
 const mapScore = (r: Row): Score => ({
   id: r.id, roundId: r.round_id, entryId: r.entry_id, playerId: r.player_id ?? null, hole: r.hole, strokes: r.strokes, version: r.version,
@@ -287,7 +287,7 @@ export class SupabaseRepo implements Repo {
       scoring_basis: s.scoringBasis, net_allowances: s.netAllowances, max_handicap_index: s.maxHandicapIndex, hide_purse: s.hidePurse,
       rounds: s.rounds.map((r) => ({
         date: r.date, tee_id: r.teeId, segments: r.segments, start_type: r.startType, start_time: r.startTime,
-        starting_hole: r.startingHole, group_size: r.groupSize, tee_interval_minutes: r.teeIntervalMinutes, use_flights: r.useFlights,
+        starting_hole: r.startingHole, group_size: r.groupSize, tee_interval_minutes: r.teeIntervalMinutes, groups_per_time: r.groupsPerTime ?? 1, use_flights: r.useFlights,
       })),
       flights: s.flights,
       registration: {
@@ -398,6 +398,7 @@ export class SupabaseRepo implements Repo {
     if (patch.startingHole !== undefined) row.starting_hole = patch.startingHole
     if (patch.groupSize !== undefined) row.group_size = patch.groupSize
     if (patch.teeIntervalMinutes !== undefined) row.tee_interval_minutes = patch.teeIntervalMinutes
+    if (patch.groupsPerTime !== undefined) row.groups_per_time = patch.groupsPerTime
     await run(this.sb.from('rounds').update(row).eq('id', roundId))
   }
   async addRound(eventId: string) {

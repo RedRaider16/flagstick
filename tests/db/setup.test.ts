@@ -23,7 +23,7 @@ const setup = (over: Record<string, unknown> = {}) => ({
   scoring_basis: 'both',
   rounds: [
     { date: '2027-04-17', tee_id: teeId, segments: best2, start_type: 'shotgun', start_time: '08:00', starting_hole: 1, group_size: 3, use_flights: true },
-    { date: '2027-04-18', tee_id: teeId, segments: best2, start_type: 'tee_times', start_time: '07:30', starting_hole: 1, group_size: 3, tee_interval_minutes: 9, use_flights: true },
+    { date: '2027-04-18', tee_id: teeId, segments: best2, start_type: 'tee_times', start_time: '07:30', starting_hole: 1, group_size: 3, tee_interval_minutes: 9, groups_per_time: 2, use_flights: true },
   ],
   flights: ['Championship', 'First'],
   registration: { open: true, max_players: 6, waitlist_limit: 3, entry_fee_cents: 15000, payment_instructions: 'Pay at the shop', show_participants: true },
@@ -67,10 +67,10 @@ describe('create_event_setup', () => {
     const id = await create(org, setup())
     const [e] = await db.admin<Record<string, unknown>>('select team_size, event_date::text d, scoring_basis, registration_open, max_players, waitlist_limit, show_participants, status from events where id = $1', [id])
     expect(e).toMatchObject({ team_size: 3, d: '2027-04-17', scoring_basis: 'both', registration_open: true, max_players: 6, waitlist_limit: 3, show_participants: true, status: 'draft' })
-    const rounds = await db.admin<Record<string, unknown>>('select round_number, start_type, start_time::text t, group_size, tee_interval_minutes from rounds where event_id = $1 order by round_number', [id])
+    const rounds = await db.admin<Record<string, unknown>>('select round_number, start_type, start_time::text t, group_size, tee_interval_minutes, groups_per_time from rounds where event_id = $1 order by round_number', [id])
     expect(rounds).toEqual([
-      { round_number: 1, start_type: 'shotgun', t: '08:00:00', group_size: 3, tee_interval_minutes: 10 },
-      { round_number: 2, start_type: 'tee_times', t: '07:30:00', group_size: 3, tee_interval_minutes: 9 },
+      { round_number: 1, start_type: 'shotgun', t: '08:00:00', group_size: 3, tee_interval_minutes: 10, groups_per_time: 1 },
+      { round_number: 2, start_type: 'tee_times', t: '07:30:00', group_size: 3, tee_interval_minutes: 9, groups_per_time: 2 },
     ])
     const fl = await db.admin<{ name: string }>('select name from flights where event_id = $1 order by sort_order', [id])
     expect(fl.map((f) => f.name)).toEqual(['Championship', 'First'])
@@ -224,8 +224,8 @@ describe('side games and payouts', () => {
     expect(pays.every((p) => p.flight_event === c!.id)).toBe(true)
     const [q] = await db.admin<{ n: number }>('select count(*)::int n from registration_questions where event_id = $1', [c!.id])
     expect(q!.n).toBe(3)
-    const [r2] = await db.admin<{ d: string; t: string }>('select round_date::text d, start_time::text t from rounds where event_id = $1 and round_number = 2', [c!.id])
-    expect(r2).toEqual({ d: '2028-04-16', t: '07:30:00' })
+    const [r2] = await db.admin<{ d: string; t: string; g: number }>('select round_date::text d, start_time::text t, groups_per_time g from rounds where event_id = $1 and round_number = 2', [c!.id])
+    expect(r2).toEqual({ d: '2028-04-16', t: '07:30:00', g: 2 })
   })
 
   it("a side game can't point at another event's round", async () => {

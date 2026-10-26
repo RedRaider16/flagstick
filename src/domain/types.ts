@@ -278,6 +278,8 @@ export interface Round {
   /** Players (or teams, in team events of 3–4) per group on the tee sheet. */
   groupSize: number
   teeIntervalMinutes: number
+  /** Tee times: groups going off at the same time (1A, 1B …). */
+  groupsPerTime: number
 }
 
 export interface Flight {

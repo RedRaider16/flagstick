@@ -218,7 +218,7 @@ export class DemoRepo implements Repo {
     })
     this.s.rounds.push({
       id: uid(), eventId: id, roundNumber: 1, date: input.date, teeId: input.teeId, segments: input.segments, useFlights: true, startType: input.startType, status: 'open',
-      startTime: null, startingHole: 1, groupSize: input.teamSize === 1 ? 4 : input.teamSize === 2 ? 2 : 1, teeIntervalMinutes: 10,
+      startTime: null, startingHole: 1, groupSize: input.teamSize === 1 ? 4 : input.teamSize === 2 ? 2 : 1, teeIntervalMinutes: 10, groupsPerTime: 1,
     })
     this.s.staff.push({ id: uid(), eventId: id, email: DEMO_USER.email, role: 'admin', userId: DEMO_USER.id, groupIds: [] })
     this.log(id, 'event_created', input.name)
@@ -253,7 +253,7 @@ export class DemoRepo implements Repo {
     })
     const roundIds = x.rounds.map((r, i) => {
       const rid = uid()
-      this.s.rounds.push({ id: rid, eventId: id, roundNumber: i + 1, status: 'open', ...clone(r) })
+      this.s.rounds.push({ id: rid, eventId: id, roundNumber: i + 1, status: 'open', ...clone(r), groupsPerTime: r.groupsPerTime ?? 1 })
       return rid
     })
     const flightIds = new Map<string, string>()

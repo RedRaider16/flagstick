@@ -264,7 +264,7 @@ export function NewEvent() {
               <div key={i} className="round-card">
                 <div className="split">
                   <h3 style={{ margin: 0 }}>Round {i + 1}<span className="muted small"> · {formatDate(r.date)}</span></h3>
-                  {i > 0 && <button className="btn quiet small" type="button" onClick={() => { const pr = s.rounds[i - 1]!; setRound(i, { startType: pr.startType, startTime: pr.startTime, startingHole: pr.startingHole, groupSize: pr.groupSize, teeIntervalMinutes: pr.teeIntervalMinutes }) }}>Same as round {i}</button>}
+                  {i > 0 && <button className="btn quiet small" type="button" onClick={() => { const pr = s.rounds[i - 1]!; setRound(i, { startType: pr.startType, startTime: pr.startTime, startingHole: pr.startingHole, groupSize: pr.groupSize, teeIntervalMinutes: pr.teeIntervalMinutes, groupsPerTime: pr.groupsPerTime ?? 1 }) }}>Same as round {i}</button>}
                 </div>
                 <TeeSheetFields id={`w-ts${i}`} teamSize={s.teamSize} value={r} onChange={(v) => setRound(i, v)} />
               </div>
@@ -552,7 +552,7 @@ function Review({ s, tees, courses, problems }: { s: EventSetup; tees: Tee[]; co
           <ul>
             {s.rounds.map((x, i) => (
               <li key={i}>
-                Round {i + 1}: {formatDate(x.date)}, {teeName(x.teeId)} tees, {x.startType === 'shotgun' ? `shotgun${x.startTime ? ` at ${x.startTime}` : ''} from hole ${x.startingHole}` : `tee times${x.startTime ? ` from ${x.startTime}` : ''}, every ${x.teeIntervalMinutes} min`}, {x.groupSize} {s.teamSize > 1 ? 'team' : 'player'}{x.groupSize === 1 ? '' : 's'} per group
+                Round {i + 1}: {formatDate(x.date)}, {teeName(x.teeId)} tees, {x.startType === 'shotgun' ? `shotgun${x.startTime ? ` at ${x.startTime}` : ''} from hole ${x.startingHole}` : `tee times${x.startTime ? ` from ${x.startTime}` : ''}, ${(x.groupsPerTime ?? 1) > 1 ? `${x.groupsPerTime} groups ` : ''}every ${x.teeIntervalMinutes} min`}, {x.groupSize} {s.teamSize > 1 ? 'team' : 'player'}{x.groupSize === 1 ? '' : 's'} per group
                 {s.rounds.some((y) => describeFormat(y.segments, s.teamSize) !== describeFormat(x.segments, s.teamSize)) && ` — ${describeFormat(x.segments, s.teamSize)}`}
               </li>
             ))}

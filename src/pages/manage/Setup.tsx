@@ -156,14 +156,14 @@ function RoundEditor(props: {
   disabled: boolean
   hasScores: boolean
   canDelete: boolean
-  onSave: (patch: { date: string; teeId: string | null; segments: Segment[]; startType: StartType; useFlights: boolean; startTime: string | null; startingHole: number; groupSize: number; teeIntervalMinutes: number }) => Promise<void>
+  onSave: (patch: { date: string; teeId: string | null; segments: Segment[]; startType: StartType; useFlights: boolean; startTime: string | null; startingHole: number; groupSize: number; teeIntervalMinutes: number; groupsPerTime: number }) => Promise<void>
   onDelete: () => void
 }) {
   const { round: r, teamSize } = props
   const { busy, error, run } = useAction()
   const initial = () => ({
     date: r.date, teeId: r.teeId, startType: r.startType, useFlights: r.useFlights,
-    startTime: r.startTime, startingHole: r.startingHole, groupSize: r.groupSize, teeIntervalMinutes: r.teeIntervalMinutes,
+    startTime: r.startTime, startingHole: r.startingHole, groupSize: r.groupSize, teeIntervalMinutes: r.teeIntervalMinutes, groupsPerTime: r.groupsPerTime ?? 1,
     segments: segmentsProblem(r.segments, teamSize) ? defaultSegments(teamSize) : r.segments,
   })
   const [f, setF] = useState(initial)
