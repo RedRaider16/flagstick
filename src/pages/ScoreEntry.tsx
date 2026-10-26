@@ -200,7 +200,13 @@ function GroupScoring({ eventId, groupId, cardCode }: { eventId: string | undefi
         </div>
         <Link className="small" to={p(`e/${bundle.event.publicCode}`)}>Leaderboard</Link>
       </div>
-      {!online && <Notice kind="warn">You're offline. Scores won't save until your connection returns — tap Retry on any unsaved score.</Notice>}
+      {!online && <Notice kind="warn">No signal. Keep entering scores: they're kept on this phone and sent by themselves when the signal comes back.</Notice>}
+      {online && writer.waitingCount > 0 && (
+        <Notice kind="info">
+          {writer.waitingCount} score{writer.waitingCount === 1 ? '' : 's'} waiting to send.{' '}
+          <button className="btn small" type="button" onClick={() => void writer.flush()}>Send now</button>
+        </Notice>
+      )}
       {blocked && <Notice kind="warn">{blocked}</Notice>}
       {needsReason && <Notice kind="info">The round is locked. As an admin you can correct scores; each change asks for a reason.</Notice>}
 
@@ -312,7 +318,7 @@ function ScorePad(props: {
   const [other, setOther] = useState('')
   const [otherErr, setOtherErr] = useState<string | null>(null)
   const saved = slotScore(bundle, slot.roundId, slot.entryId, slot.playerId, slot.hole)
-  const shown = state && (state.kind === 'saving' || state.kind === 'failed') ? state.value : saved?.strokes ?? null
+  const shown = state && (state.kind === 'saving' || state.kind === 'failed' || state.kind === 'queued') ? state.value : saved?.strokes ?? null
   const choices = Array.from({ length: 6 }, (_, i) => par - 2 + i).filter((v) => v >= 1)
   const id = `o-${slot.entryId}-${slot.playerId ?? 'e'}`
 
@@ -362,6 +368,8 @@ function SaveState({ state, onRetry, onTheirs, onMine }: { state: CellState | un
   if (state.kind === 'saving')
     return <div className="save-state saving" role="status"><span className="spin" aria-hidden="true" /> Saving…</div>
   if (state.kind === 'saved') return <div className="save-state saved" role="status">✓ Saved</div>
+  if (state.kind === 'queued')
+    return <div className="save-state queued" role="status">Kept on this phone. It will send by itself when you have signal.</div>
   if (state.kind === 'failed')
     return (
       <div className="save-state failed" role="alert">

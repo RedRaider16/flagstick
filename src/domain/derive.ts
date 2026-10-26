@@ -131,7 +131,7 @@ export function buildEventLeaderboard(b: EventBundle, scope: Scope, basis: Basis
   const byFlight = scope === 'overall' ? b.rounds.some((r) => r.useFlights) : rounds.some((r) => r.useFlights)
   const excluded = new Map<string, string>()
   const evRounds = rounds.filter((r) => r.teeId).map((r) => evRound(b, r, basis, excluded))
-  return computeEventLeaderboard({
+  const lb = computeEventLeaderboard({
     rounds: evRounds,
     entries: b.entries.map((e) => ({ id: e.id, name: nameOf(b, e), status: e.status, flightId: e.flightId, excluded: excluded.get(e.id) })),
     flights: b.flights.map((f) => ({ id: f.id, name: f.name })),
@@ -139,6 +139,26 @@ export function buildEventLeaderboard(b: EventBundle, scope: Scope, basis: Basis
     tiebreak: b.event.tiebreakPolicy,
     final: rounds.length > 0 && rounds.every((r) => r.status === 'finalized'),
   })
+  return withTeeTimes(b, lb, evRounds.map((r) => r.id))
+}
+
+/**
+ * Thru for someone who hasn't started the round in play: their tee time (like
+ * Golf Genius), instead of the last round's "F" or a dash.
+ */
+function withTeeTimes(b: EventBundle, lb: EventLeaderboard, roundIds: string[]): EventLeaderboard {
+  if (b.rounds.length === 0) return lb
+  const live = currentRound(b)
+  const i = roundIds.indexOf(live.id)
+  if (i < 0 || live.status === 'finalized') return lb
+  const groups = roundGroups(b, live.id)
+  for (const g of lb.groups)
+    for (const row of g.rows) {
+      if (row.status !== 'active' || (row.rounds[i]?.holesPlayed ?? 0) > 0) continue
+      const grp = groups.find((x) => x.entryIds.includes(row.entryId))
+      row.thru = live.startType === 'tee_times' && grp?.teeTime ? formatTeeTime(grp.teeTime).replace(' ', '\u00a0') : '—'
+    }
+  return lb
 }
 
 /** Leaderboard views to offer: overall plus each round, or just rounds when each day stands alone. */

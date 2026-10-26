@@ -22,6 +22,7 @@ import { SideGames } from './pages/manage/SideGames'
 import { Payouts } from './pages/manage/Payouts'
 import { Staff } from './pages/manage/Staff'
 import { AdminScores } from './pages/manage/AdminScores'
+import { CourseStatus } from './pages/manage/CourseStatus'
 import { History } from './pages/manage/History'
 import { Exports } from './pages/manage/Exports'
 import { PrintPairings, PrintScorecards } from './pages/manage/Print'
@@ -54,6 +55,7 @@ const pages: RouteObject[] = [
       { path: 'payouts', element: <Payouts /> },
       { path: 'groups', element: <Groups /> },
       { path: 'staff', element: <Staff /> },
+      { path: 'status', element: <CourseStatus /> },
       { path: 'scores', element: <AdminScores /> },
       { path: 'history', element: <History /> },
       { path: 'exports', element: <Exports /> },

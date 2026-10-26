@@ -221,6 +221,7 @@ td.n, th.n { text-align: right; }
 .save-state { display: flex; align-items: center; gap: .35rem; font-size: .9rem; font-weight: 600; margin-top: .45rem; min-height: 1.4rem; }
 .save-state.saved { color: var(--ok); }
 .save-state.saving { color: var(--pending); }
+.save-state.queued { color: var(--pending); font-weight: 600; }
 .save-state.failed, .save-state.conflict { color: var(--danger); }
 .spin { width: .9rem; height: .9rem; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -361,3 +362,14 @@ tr.sub-row td.ro { color: var(--ink-soft); text-align: center; }
 .scorecard .card-qr { display: flex; align-items: center; gap: .4rem; font-size: 8pt; line-height: 1.2; text-align: left; }
 .scorecard .card-qr .qr { width: 0.95in; height: 0.95in; flex: none; }
 .scorecard .card-qr .qr svg { width: 100%; height: 100%; display: block; }
+.status-tiles { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.status-tile { display: flex; flex-direction: column; align-items: flex-start; min-width: 7.5rem; padding: .5rem .75rem; border: 1px solid var(--rule); border-radius: var(--radius-m); background: var(--card); color: var(--ink); cursor: pointer; font: inherit; text-align: left; }
+.status-tile .n { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+.status-tile.on { outline: 2px solid var(--fairway); }
+.status-tile.attention .n { color: var(--danger); }
+.status-tile.finished .n { color: var(--fairway); }
+.status-pill { display: inline-block; font-size: .82rem; font-weight: 600; padding: .1rem .5rem; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.status-pill.not_started { color: #59625e; }
+.status-pill.on_course { color: #1b5e87; }
+.status-pill.finished { color: var(--fairway); background: var(--fairway-tint); }
+.status-pill.attention { color: var(--danger); background: var(--danger-tint); }

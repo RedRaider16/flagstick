@@ -131,7 +131,7 @@ export function Leaderboard(props: {
           {lb.groups.some((g) => g.unresolvedTies.length > 0) && ' Some ties could not be separated and stand as ties.'}
         </div>
         <div>
-          Thru shows holes completed; F = finished; * = started on a hole other than 1. WD, DQ, DNF and NS are unranked.
+          Thru shows holes completed; F = finished; * = started on a hole other than 1; a time is the tee time for those who haven't started. WD, DQ, DNF and NS are unranked.
           {props.footnote && <> {props.footnote}</>}
           {pay && !lb.final && ' Projected payouts follow the current standings; ties share the places they cover.'}
           {!anyScores && ' No scores yet.'}

@@ -145,7 +145,7 @@ export function AdminScores() {
                       const k = cellKey(slot)
                       const s = slotScore(bundle, round.id, r.entryId, ln.playerId, h.number)
                       const cell = writer.cells[k]
-                      const value = drafts[k] ?? (cell?.kind === 'saving' && cell.value !== null ? String(cell.value) : s ? String(s.strokes) : '')
+                      const value = drafts[k] ?? ((cell?.kind === 'saving' || cell?.kind === 'queued') && cell.value !== null ? String(cell.value) : s ? String(s.strokes) : '')
                       return (
                         <td key={h.number}>
                           <input

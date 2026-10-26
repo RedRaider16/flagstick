@@ -45,6 +45,7 @@ export function ManageLayout() {
     ['staff', 'Scorekeepers'],
     ['side-games', 'Side games'],
     ['payouts', 'Payouts'],
+    ['status', 'Live status'],
     ['scores', 'Scores'],
     ['history', 'History'],
     ['exports', 'Export & print'],
