@@ -4,6 +4,8 @@
 import { createClient, type PostgrestError, type SupabaseClient } from '@supabase/supabase-js'
 import type {
   Course,
+  EmailLog,
+  EmailSettings,
   Entry,
   EntryStatus,
   EventBundle,
@@ -653,6 +655,24 @@ export class SupabaseRepo implements Repo {
   }
   async resetScoringCards(roundId: string) {
     await run(this.sb.rpc('reset_scoring_cards', { p_round: roundId }))
+  }
+  async emailSettings(): Promise<EmailSettings | null> {
+    const rows = (await run(this.sb.from('email_settings').select('enabled, from_name, from_address, reply_to'))) as Row[]
+    const r = rows[0]
+    return r ? { enabled: r.enabled, fromName: r.from_name, fromAddress: r.from_address, replyTo: r.reply_to } : null
+  }
+  async saveEmailSettings(s: EmailSettings) {
+    await run(this.sb.from('email_settings').update({ enabled: s.enabled, from_name: s.fromName.trim(), from_address: s.fromAddress.trim(), reply_to: s.replyTo.trim() }).eq('id', true))
+  }
+  async listEmails(eventId: string): Promise<EmailLog[]> {
+    const rows = (await run(this.sb.from('email_outbox').select('*').eq('event_id', eventId).order('created_at', { ascending: false }).limit(300))) as Row[]
+    return rows.map((r) => ({
+      id: r.id, registrationId: r.registration_id, kind: r.kind, toEmail: r.to_email, subject: r.subject, body: r.body, status: r.status,
+      attempts: r.attempts, lastError: r.last_error, createdAt: r.created_at, sentAt: r.sent_at,
+    }))
+  }
+  async resendEmail(id: string) {
+    await run(this.sb.rpc('resend_email', { p_id: id }))
   }
   async scoringCard(code: string) {
     if (!/^[0-9a-f]{32}$/i.test(code)) return null

@@ -3,6 +3,8 @@
 //   SupabaseRepo — shared, persistent data; permissions enforced by the database
 import type {
   Course,
+  EmailLog,
+  EmailSettings,
   EntryStatus,
   EventBundle,
   EventLogEntry,
@@ -264,6 +266,14 @@ export interface Repo {
   /** cardCode: score with a printed card's QR code instead of a signed-in role. */
   setScore(slot: ScoreSlot, strokes: number, expectedVersion: number | null, reason: string, cardCode?: string): Promise<Score>
   clearScore(slot: ScoreSlot, expectedVersion: number, reason: string, cardCode?: string): Promise<void>
+
+  // ── Confirmation emails ──
+  /** Organizers only; null for anyone else. */
+  emailSettings(): Promise<EmailSettings | null>
+  saveEmailSettings(s: EmailSettings): Promise<void>
+  /** Event admins: messages queued and sent for this event, newest first. */
+  listEmails(eventId: string): Promise<EmailLog[]>
+  resendEmail(id: string): Promise<void>
 
   // ── Scorecard QR codes ──
   /** Admin: groupId → card code for every group in the round (missing ones are created). */

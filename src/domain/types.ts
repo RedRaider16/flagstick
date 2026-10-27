@@ -422,3 +422,34 @@ export function entryName(entry: Entry, players: Player[], teams: Team[]): strin
     .map((p) => p.lastName || p.firstName)
   return members.length ? `${t.name} (${members.join(' / ')})` : t.name
 }
+
+// ── Confirmation emails ──
+
+export interface EmailSettings {
+  enabled: boolean
+  fromName: string
+  fromAddress: string
+  replyTo: string
+}
+
+export type EmailKind = 'registered' | 'waitlisted' | 'promoted' | 'cancelled'
+export const EMAIL_KIND_LABEL: Record<EmailKind, string> = {
+  registered: 'Registered',
+  waitlisted: 'Waitlisted',
+  promoted: 'Off the waitlist',
+  cancelled: 'Cancelled',
+}
+
+export interface EmailLog {
+  id: string
+  registrationId: string | null
+  kind: EmailKind
+  toEmail: string
+  subject: string
+  body: string
+  status: 'pending' | 'sending' | 'sent' | 'failed'
+  attempts: number
+  lastError: string
+  createdAt: string
+  sentAt: string | null
+}

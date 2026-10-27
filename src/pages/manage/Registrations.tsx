@@ -19,6 +19,7 @@ import {
 import { toCsv } from '../../scoring/csv'
 import { centsToDollars, dollarsToCents, isoToZonedInput, zonedInputToIso } from '../../domain/inputs'
 import { QuestionsEditor, type QuestionDraft } from '../../components/QuestionsEditor'
+import { EmailsPanel } from '../../components/EmailsPanel'
 import { registrationState } from '../Register'
 import { useManage } from './ManageLayout'
 
@@ -137,6 +138,8 @@ export function Registrations() {
           </div>
         )}
       </section>
+
+      <EmailsPanel eventId={event.id} tz={event.timezone} />
     </>
   )
 }

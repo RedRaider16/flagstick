@@ -3,6 +3,7 @@
 // group assignment, version conflicts) so the demo behaves like the real thing.
 import {
   NO_REGISTRATION,
+  type EmailSettings,
   type Entry,
   type EntryStatus,
   type EventBundle,
@@ -1105,6 +1106,19 @@ export class DemoRepo implements Repo {
     for (const g of this.s.groups.filter((x) => x.roundId === roundId)) delete this.s.cards?.[g.id]
     this.commit()
   }
+  // The demo never sends email; it shows the settings form and an empty log.
+  private demoEmail: EmailSettings = { enabled: false, fromName: 'Flagstick', fromAddress: '', replyTo: '' }
+  async emailSettings() {
+    return this.s.role === 'admin' ? { ...this.demoEmail } : null
+  }
+  async saveEmailSettings(s: EmailSettings) {
+    if (this.s.role !== 'admin') throw new AppError('Organizers only.', 'forbidden')
+    this.demoEmail = { ...s }
+  }
+  async listEmails(_eventId: string) {
+    return []
+  }
+  async resendEmail(_id: string) {}
   async scoringCard(code: string) {
     const groupId = Object.entries(this.s.cards ?? {}).find(([, c]) => c === code.toLowerCase())?.[0]
     const g = this.s.groups.find((x) => x.id === groupId)
