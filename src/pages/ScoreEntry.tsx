@@ -6,7 +6,7 @@ import { cellKey, useScoreWriter, type CellState } from '../app/useScoreWriter'
 import type { ScoreSlot } from '../data/repo'
 import { ErrorNote, Loading, Notice, useReasonDialog } from '../components/ui'
 import { HoleWinnersForm } from './manage/SideGames'
-import { buildEventLeaderboard, currentRound, entryPlayers, formatOf, formatTeeTime, holesDone, isTeamEvent, nameOf, roundGroups, roundHoles, slotScore, teeHoles } from '../domain/derive'
+import { buildEventLeaderboard, currentRound, entryStatusIn, entryPlayers, formatOf, formatTeeTime, holesDone, isTeamEvent, nameOf, roundGroups, roundHoles, slotScore, teeHoles } from '../domain/derive'
 import { ENTRY_STATUS_LABEL, playerName, type Entry, type EventBundle, type Player, type Round } from '../domain/types'
 import { countingScore, segmentFor } from '../scoring/formats'
 import { formatToPar, rotation } from '../scoring/leaderboard'
@@ -173,7 +173,7 @@ function GroupScoring({ eventId, groupId, cardCode }: { eventId: string | undefi
   const seg = segmentFor(round.segments, holeNo)
   const entries = group.entryIds.map((id) => bundle.entries.find((e) => e.id === id)).filter((e): e is Entry => !!e)
   const isTeam = isTeamEvent(bundle)
-  const holeDone = (h: number) => entries.length > 0 && entries.filter((e) => e.status === 'active').every((e) => entryHoleDone(bundle, round, e.id, h))
+  const holeDone = (h: number) => entries.length > 0 && entries.filter((e) => entryStatusIn(bundle, e.id, round.id) === 'active').every((e) => entryHoleDone(bundle, round, e.id, h))
   const rowOf = (entryId: string) => lb?.groups.flatMap((g) => g.rows).find((x) => x.entryId === entryId)
 
   const askReason = async () => {
@@ -234,6 +234,7 @@ function GroupScoring({ eventId, groupId, cardCode }: { eventId: string | undefi
       {entries.length === 0 && <Notice kind="info">No {isTeam ? 'teams' : 'players'} in this group yet.</Notice>}
       {entries.map((e) => {
         const row = rowOf(e.id)
+        const st = entryStatusIn(bundle, e.id, round.id)
         const team = e.teamId ? bundle.teams.find((t) => t.id === e.teamId) : null
         const members = entryPlayers(bundle, e)
         const label = isTeam ? team?.name ?? 'Team' : nameOf(bundle, e)
@@ -252,7 +253,7 @@ function GroupScoring({ eventId, groupId, cardCode }: { eventId: string | undefi
             <div className="entrant-head">
               <div>
                 <div className="entrant-name" id={`ent-${e.id}`}>
-                  {label} {e.status !== 'active' && <span className={`badge ${e.status}`} title={ENTRY_STATUS_LABEL[e.status]}>{e.status.toUpperCase()}</span>}
+                  {label} {st !== 'active' && <span className={`badge ${st}`} title={`${ENTRY_STATUS_LABEL[st]}${e.status === 'active' ? ' this round' : ''}`}>{st.toUpperCase()}</span>}
                 </div>
                 <div className="entrant-sub">
                   {team && `${members.map(playerName).join(', ')}. `}
@@ -269,7 +270,7 @@ function GroupScoring({ eventId, groupId, cardCode }: { eventId: string | undefi
             </div>
             {lines.map((ln) => (
               <ScorePad key={cellKey(ln.slot)} bundle={bundle} slot={ln.slot} name={ln.name} par={par} label={ln.name ?? label}
-                state={writer.cells[cellKey(ln.slot)]} disabled={!!blocked || (!isAdmin && e.status !== 'active')}
+                state={writer.cells[cellKey(ln.slot)]} disabled={!!blocked || (!isAdmin && st !== 'active')}
                 onSet={(v) => void commit(ln.slot, v)}
                 onTheirs={() => writer.acceptTheirs(ln.slot)}
                 onMine={async () => {

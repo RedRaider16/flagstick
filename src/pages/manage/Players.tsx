@@ -183,7 +183,7 @@ export function Players() {
                       {isTeam ? (
                         <td>{teamOf(pl.id)?.name ?? <span className="muted">No team</span>}</td>
                       ) : (
-                        <td>{entry && <EntryStatusControl entry={entry} disabled={final} onDone={() => void reload()} onError={setError} />}</td>
+                        <td>{entry && <EntryStatusControl entry={entry} rounds={bundle.rounds} roundStatuses={bundle.roundStatuses} disabled={final} onDone={() => void reload()} onError={setError} />}</td>
                       )}
                       <td className="n" style={{ whiteSpace: 'nowrap' }}>
                         <button className="btn quiet small" type="button" disabled={final} onClick={() => {

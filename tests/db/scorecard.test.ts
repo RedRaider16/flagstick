@@ -105,3 +105,26 @@ describe('scorecard codes', () => {
     expect(rows).toEqual([])
   })
 })
+
+describe('no-show / did-not-finish for one round', () => {
+  it('only admins set it; everyone who can see the event can read it', async () => {
+    const fresh = await db.as<{ group_id: string; token: string }>(org, 'select * from scoring_card_codes($1)', [ev.round])
+    codes = new Map(fresh.map((r) => [r.group_id, r.token]))
+    expect((await db.fails(other, `select set_round_entry_status($1, $2, 'ns', '')`, [ev.round, ev.entries[0]])).code).toBe('PT403')
+    expect((await db.fails('anon', `select set_round_entry_status($1, $2, 'ns', '')`, [ev.round, ev.entries[0]])).code).toBe('42501')
+    expect((await db.fails(org, `select set_round_entry_status($1, $2, 'wd', '')`, [ev.round, ev.entries[0]])).code).toBe('PT409')
+    await db.as(org, `select set_round_entry_status($1, $2, 'ns', 'did not show sunday')`, [ev.round, ev.entries[0]])
+    expect(await db.as('anon', 'select status, note from round_entry_status where entry_id = $1', [ev.entries[0]])).toEqual([{ status: 'ns', note: 'did not show sunday' }])
+    expect((await db.fails('anon', `insert into round_entry_status(round_id, entry_id, event_id, status) values ($1,$2,$3,'dnf')`, [ev.round, ev.entries[1], ev.event])).code).toBe('42501')
+  })
+
+  it('blocks scoring that entry in that round from a card, but an admin can still correct it', async () => {
+    expect((await failByCard(codes.get(ev.g1)!, ev.entries[0]!, 9, 4, null)).message).toMatch(/marked NS for this round/)
+    const [s] = await db.as<{ strokes: number }>(org, 'select * from set_score($1,$2,9,4,null,$3)', [ev.round, ev.entries[0], ''])
+    expect(s!.strokes).toBe(4)
+    await db.as(org, 'select set_round_entry_status($1, $2, null, $3)', [ev.round, ev.entries[0], 'showed up late'])
+    const [again] = await setByCard(codes.get(ev.g1)!, ev.entries[0]!, 10, 5, null)
+    expect(again!.strokes).toBe(5)
+    expect(await db.as('anon', 'select 1 from round_entry_status where entry_id = $1', [ev.entries[0]])).toEqual([])
+  })
+})

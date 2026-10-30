@@ -1,5 +1,6 @@
 // Fictional demo data. No real people, clubs or courses.
 import type {
+  RoundEntryStatus,
   Course,
   Entry,
   EventLogEntry,
@@ -31,6 +32,8 @@ export interface DemoState {
   role: 'admin' | 'scorekeeper' | 'spectator'
   /** Scorecard QR codes: groupId → code. Optional so saved demos keep loading. */
   cards?: Record<string, string>
+  /** DNF / NS for one round. Optional so saved demos keep loading. */
+  roundStatuses?: RoundEntryStatus[]
   organizers: boolean
   courses: (Course & { ownerId: string })[]
   tees: Tee[]

@@ -93,7 +93,7 @@ export function Teams() {
                     }}
                     status={(() => {
                       const entry = bundle.entries.find((e) => e.teamId === t.id)
-                      return entry ? <EntryStatusControl entry={entry} disabled={final} onDone={() => void reload()} onError={setError} /> : null
+                      return entry ? <EntryStatusControl entry={entry} rounds={bundle.rounds} roundStatuses={bundle.roundStatuses} disabled={final} onDone={() => void reload()} onError={setError} /> : null
                     })()}
                   />
                 ))}

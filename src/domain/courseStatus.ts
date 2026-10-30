@@ -2,7 +2,7 @@
 // finished, or needing attention because a hole is missing.
 import { countingCards } from '../scoring/formats'
 import { findGaps, rotation } from '../scoring/leaderboard'
-import { nameOf, roundGroups, roundScores } from './derive'
+import { entryStatusIn, nameOf, roundGroups, roundScores } from './derive'
 import type { EventBundle, Group, Round } from './types'
 
 export type GroupState = 'not_started' | 'on_course' | 'finished' | 'attention'
@@ -21,7 +21,7 @@ export interface GroupStatus {
 }
 
 export function groupStatus(b: EventBundle, round: Round, group: Group): GroupStatus {
-  const active = group.entryIds.map((id) => b.entries.find((e) => e.id === id)).filter((e) => !!e && e.status === 'active')
+  const active = group.entryIds.map((id) => b.entries.find((e) => e.id === id)).filter((e) => !!e && entryStatusIn(b, e.id, round.id) === 'active')
   const scores = roundScores(b, round.id).filter((s) => group.entryIds.includes(s.entryId))
   const cards = countingCards(round.segments, scores)
   const order = rotation(group.startingHole)

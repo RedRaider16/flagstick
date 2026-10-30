@@ -4,7 +4,7 @@ import { countingCards, countingPar, describeFormat, segmentFor, type Segment } 
 import { courseHandicap, entryHandicaps, HANDICAP_PROBLEM_TEXT, netCard, type HandicapProblem } from '../scoring/handicap'
 import { computeSkins, splitPayouts, type SkinsResult } from '../scoring/sidegames'
 import type { PayoutTable, ScoringBasis, SideGame } from './types'
-import { entryName, type Entry, type EventBundle, type Group, type Hole, type Player, type Round, type Score, type Tee } from './types'
+import { entryName, type Entry, type EntryStatus, type EventBundle, type Group, type Hole, type Player, type Round, type Score, type Tee } from './types'
 
 export const isTeamEvent = (b: EventBundle) => b.event.teamSize > 1
 
@@ -126,14 +126,44 @@ function evRound(b: EventBundle, round: Round, basis: Basis = 'gross', excluded?
 export type Scope = 'overall' | string
 
 /** Leaderboard for the whole event ('overall') or one round (its id), gross or net. */
+/**
+ * An entry's status in one round: its whole-event status (WD, DQ …) if it has
+ * one, otherwise a DNF / NS marked for that round only, otherwise playing.
+ */
+export function entryStatusIn(b: EventBundle, entryId: string, roundId: string): EntryStatus {
+  const e = b.entries.find((x) => x.id === entryId)
+  if (!e) return 'active'
+  if (e.status !== 'active') return e.status
+  return (b.roundStatuses ?? []).find((x) => x.roundId === roundId && x.entryId === entryId)?.status ?? 'active'
+}
+
+/** The first round (in order) an entry is marked out of, if any. */
+function roundOut(b: EventBundle, entryId: string, rounds: Round[]) {
+  for (const r of rounds) {
+    const x = (b.roundStatuses ?? []).find((s) => s.roundId === r.id && s.entryId === entryId)
+    if (x) return { round: r, status: x.status }
+  }
+  return null
+}
+
 export function buildEventLeaderboard(b: EventBundle, scope: Scope, basis: Basis = 'gross'): EventLeaderboard {
   const rounds = scope === 'overall' ? b.rounds : b.rounds.filter((r) => r.id === scope)
   const byFlight = scope === 'overall' ? b.rounds.some((r) => r.useFlights) : rounds.some((r) => r.useFlights)
   const excluded = new Map<string, string>()
   const evRounds = rounds.filter((r) => r.teeId).map((r) => evRound(b, r, basis, excluded))
+  // Out of one round: unranked on that round's board and overall, still ranked on the others.
+  const statusOf = (e: Entry): { status: EntryStatus; note?: string } => {
+    if (e.status !== 'active') return { status: e.status }
+    const out = roundOut(b, e.id, rounds)
+    if (!out) return { status: 'active' }
+    return { status: out.status, note: scope === 'overall' && b.rounds.length > 1 ? `${out.status === 'ns' ? 'no-show' : 'did not finish'} in round ${out.round.roundNumber}` : undefined }
+  }
   const lb = computeEventLeaderboard({
     rounds: evRounds,
-    entries: b.entries.map((e) => ({ id: e.id, name: nameOf(b, e), status: e.status, flightId: e.flightId, excluded: excluded.get(e.id) })),
+    entries: b.entries.map((e) => {
+      const st = statusOf(e)
+      return { id: e.id, name: nameOf(b, e), status: st.status, flightId: e.flightId, excluded: st.note ?? excluded.get(e.id) }
+    }),
     flights: b.flights.map((f) => ({ id: f.id, name: f.name })),
     byFlight,
     tiebreak: b.event.tiebreakPolicy,

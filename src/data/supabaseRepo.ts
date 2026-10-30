@@ -4,6 +4,7 @@
 import { createClient, type PostgrestError, type SupabaseClient } from '@supabase/supabase-js'
 import type {
   Course,
+  RoundOutStatus,
   Entry,
   EntryStatus,
   EventBundle,
@@ -320,19 +321,21 @@ export class SupabaseRepo implements Repo {
       run(this.sb.from('group_entries').select('*').eq('event_id', eventId)),
       this.listScores(eventId),
     ])
-    const [questions, sideGames, sideEntries, sideResults, payouts, handicaps] = await Promise.all([
+    const [questions, sideGames, sideEntries, sideResults, payouts, handicaps, roundStatuses] = await Promise.all([
       run(this.sb.from('registration_questions').select('*').eq('event_id', eventId).order('sort_order')),
       run(this.sb.from('side_games').select('*').eq('event_id', eventId).order('sort_order')),
       run(this.sb.from('side_game_entries').select('*').eq('event_id', eventId)),
       run(this.sb.from('side_game_results').select('*').eq('event_id', eventId)),
       run(this.sb.from('payout_tables').select('*').eq('event_id', eventId)),
       run(this.sb.rpc('event_handicaps', { p_event: eventId })),
+      run(this.sb.from('round_entry_status').select('*').eq('event_id', eventId)),
     ])
     const teeIds = (tees as Row[]).map((t) => t.id)
     const holes = teeIds.length ? ((await run(this.sb.from('holes').select('*').in('tee_id', teeIds).order('number'))) as Row[]) : []
     const memberRows = members as Row[]
     const geRows = groupEntries as Row[]
     return {
+      roundStatuses: (roundStatuses as Row[]).map((r) => ({ roundId: r.round_id, entryId: r.entry_id, status: r.status, note: r.note })),
       event,
       course: course ? mapCourse(course as Row) : null,
       tees: (tees as Row[]).map(mapTee),
@@ -475,6 +478,9 @@ export class SupabaseRepo implements Repo {
   }
   async deleteTeam(teamId: string) {
     await run(this.sb.from('teams').delete().eq('id', teamId))
+  }
+  async setRoundEntryStatus(roundId: string, entryId: string, status: RoundOutStatus | null, note: string) {
+    await run(this.sb.rpc('set_round_entry_status', { p_round: roundId, p_entry: entryId, p_status: status, p_note: note }))
   }
   async setEntryStatus(entryId: string, status: EntryStatus, note: string) {
     await run(this.sb.rpc('set_entry_status', { p_entry: entryId, p_status: status, p_note: note }))
@@ -687,6 +693,7 @@ export class SupabaseRepo implements Repo {
       .channel(`event-${eventId}-${Math.random().toString(36).slice(2)}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scores', filter: `event_id=eq.${eventId}` }, () => onChange('scores'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'entries', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'round_entry_status', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'events', filter: `id=eq.${eventId}` }, () => onChange('all'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rounds', filter: `event_id=eq.${eventId}` }, () => onChange('all'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'flights', filter: `event_id=eq.${eventId}` }, () => onChange('all'))

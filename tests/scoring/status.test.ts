@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DemoRepo } from '../../src/data/demoRepo'
 import { courseStatus, groupStatus } from '../../src/domain/courseStatus'
-import { buildEventLeaderboard } from '../../src/domain/derive'
+import { buildEventLeaderboard, entryStatusIn } from '../../src/domain/derive'
 import type { EventBundle, Score } from '../../src/domain/types'
 
 const load = () => new DemoRepo().loadBundle('ev-classic')
@@ -59,5 +59,26 @@ describe('thru before teeing off', () => {
     expect(rows.map((r) => r.thru)).toEqual(g.entryIds.map(() => '8:00 AM'))
     const playing = buildEventLeaderboard(withGroup1(b, () => range(1, 5)), 'rd-classic').groups.flatMap((x) => x.rows).find((r) => r.entryId === g.entryIds[0])!
     expect(playing.thru).toBe('5')
+  })
+})
+
+describe('no-show in one round', () => {
+  it('keeps round 1 ranked, is unranked overall and on round 2, and is noted', async () => {
+    const b0 = await new DemoRepo().loadBundle('ev-showdown')
+    const [r1, r2] = b0.rounds
+    const lb1 = buildEventLeaderboard(b0, r1!.id).groups.flatMap((g) => g.rows)
+    const target = lb1.find((r) => r.position !== null)!
+    const b = { ...b0, roundStatuses: [{ roundId: r2!.id, entryId: target.entryId, status: 'ns' as const, note: '' }] }
+    expect(entryStatusIn(b, target.entryId, r1!.id)).toBe('active')
+    expect(entryStatusIn(b, target.entryId, r2!.id)).toBe('ns')
+    const day1 = buildEventLeaderboard(b, r1!.id).groups.flatMap((g) => g.rows).find((r) => r.entryId === target.entryId)!
+    expect(day1.position).toBe(target.position)
+    const day2 = buildEventLeaderboard(b, r2!.id).groups.flatMap((g) => g.rows).find((r) => r.entryId === target.entryId)!
+    expect(day2).toMatchObject({ status: 'ns', position: null, positionLabel: 'NS' })
+    const overall = buildEventLeaderboard(b, 'overall').groups.flatMap((g) => g.rows).find((r) => r.entryId === target.entryId)!
+    expect(overall).toMatchObject({ status: 'ns', position: null, note: 'no-show in round 2' })
+    // A whole-event status wins over the round one.
+    const wd = { ...b, entries: b.entries.map((e) => (e.id === target.entryId ? { ...e, status: 'wd' as const } : e)) }
+    expect(entryStatusIn(wd, target.entryId, r2!.id)).toBe('wd')
   })
 })

@@ -3,6 +3,7 @@
 // group assignment, version conflicts) so the demo behaves like the real thing.
 import {
   NO_REGISTRATION,
+  type RoundOutStatus,
   type Entry,
   type EntryStatus,
   type EventBundle,
@@ -315,6 +316,7 @@ export class DemoRepo implements Repo {
       sideGames: this.s.sideGames.filter((g) => g.eventId === eventId).sort((a, b) => a.sortOrder - b.sortOrder),
       sideGameResults: this.s.sideGameResults.filter((r) => this.s.sideGames.some((g) => g.id === r.gameId && g.eventId === eventId)),
       payouts: event.hidePurse && !access.role ? [] : this.s.payouts.filter((x) => x.eventId === eventId),
+      roundStatuses: (this.s.roundStatuses ?? []).filter((x) => roundIds.has(x.roundId)),
       handicaps: access.role === 'admin' || event.scoringBasis !== 'gross'
         ? this.s.handicaps.filter((h) => this.s.players.some((p) => p.id === h.playerId && p.eventId === eventId))
         : [],
@@ -592,6 +594,17 @@ export class DemoRepo implements Repo {
       this.s.entries = this.s.entries.filter((e) => e.id !== entry.id)
       this.s.groups.forEach((g) => (g.entryIds = g.entryIds.filter((id) => id !== entry.id)))
     }
+    this.commit()
+  }
+  async setRoundEntryStatus(roundId: string, entryId: string, status: RoundOutStatus | null, note: string) {
+    const r = this.s.rounds.find((x) => x.id === roundId)
+    if (!r) throw new AppError('Round not found.', 'not_found')
+    this.requireAdmin(r.eventId)
+    if (r.status === 'finalized' || this.event(r.eventId).status === 'finalized') throw new AppError('Results for this round are final. Reopen it first.', 'conflict')
+    const list = (this.s.roundStatuses ??= []).filter((x) => !(x.roundId === roundId && x.entryId === entryId))
+    if (status) list.push({ roundId, entryId, status, note })
+    this.s.roundStatuses = list
+    this.log(r.eventId, `round_entry_status:R${r.roundNumber}:${status ?? 'active'}`, `${entryId} ${note}`.trim())
     this.commit()
   }
   async setEntryStatus(entryId: string, status: EntryStatus, note: string) {

@@ -403,6 +403,16 @@ export interface EventBundle {
   payouts: PayoutTable[]
   /** Handicap Indexes: public for net events, otherwise admins only (empty for others). */
   handicaps: PlayerHandicap[]
+  /** DNF / NS for a single round (the entry's own status covers the whole event). */
+  roundStatuses: RoundEntryStatus[]
+}
+
+export type RoundOutStatus = 'dnf' | 'ns'
+export interface RoundEntryStatus {
+  roundId: string
+  entryId: string
+  status: RoundOutStatus
+  note: string
 }
 
 export function playerName(p: Pick<Player, 'firstName' | 'lastName'>): string {

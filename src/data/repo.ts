@@ -2,6 +2,7 @@
 //   DemoRepo     — fictional data in this browser only (no credentials, not shared)
 //   SupabaseRepo — shared, persistent data; permissions enforced by the database
 import type {
+  RoundOutStatus,
   Course,
   EntryStatus,
   EventBundle,
@@ -212,6 +213,8 @@ export interface Repo {
   updateTeam(teamId: string, eventId: string, name: string, playerIds: string[]): Promise<void>
   deleteTeam(teamId: string): Promise<void>
   setEntryStatus(entryId: string, status: EntryStatus, note: string): Promise<void>
+  /** DNF / NS for one round; null clears it. */
+  setRoundEntryStatus(roundId: string, entryId: string, status: RoundOutStatus | null, note: string): Promise<void>
 
   // ── Registration ──
   /** Public: sign up for an event by its code (no account needed). */
